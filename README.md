@@ -1,5 +1,7 @@
 # gitkit
 
+[![CI](https://github.com/ruiuri0423/oldGitKit/actions/workflows/ci.yml/badge.svg)](https://github.com/ruiuri0423/oldGitKit/actions/workflows/ci.yml)
+
 A terminal UI (TUI) that helps a team migrating from **SVN to git** *see* what git is
 doing — the 3-stage index, local vs. remote, branch topology, detached HEAD, merges and
 conflicts — instead of memorising commands.
