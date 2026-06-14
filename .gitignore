@@ -1,0 +1,18 @@
+# virtualenv / build
+.venv/
+*.egg-info/
+build/
+dist/
+
+# python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# local scratch git repos used as demo/test fixtures (contain nested .git)
+.fixtures/
+
+# OS / editor
+.DS_Store
+Thumbs.db

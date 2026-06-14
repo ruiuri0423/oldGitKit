@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitkit"
+version = "0.0.1"
+description = "TUI git learning tool for SVN-to-git migration (git 1.8.3.1 compatible)"
+requires-python = ">=3.9"
+dependencies = [
+    "textual>=0.50",
+    "unidiff>=0.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

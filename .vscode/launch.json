@@ -1,0 +1,17 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug gitkit",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "gitkit",
+            "args": ["E:/gitkit_tui/.fixtures/scenario"],
+            "cwd": "E:/gitkit_tui",
+            "console": "externalTerminal"
+        }
+    ]
+}
