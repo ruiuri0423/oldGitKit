@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitkit — 使用說明投影片</title>
+<style>
+  :root { --bg:#0d1117; --fg:#c9d1d9; --dim:#8b949e; --accent:#fea62b; --line:#30363d; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; }
+  #bar { position:fixed; top:0; left:0; right:0; height:42px; display:flex;
+    align-items:center; justify-content:space-between; padding:0 18px;
+    border-bottom:1px solid var(--line); background:#161b22; z-index:10; }
+  #bar .t { font-weight:600; color:var(--accent); }
+  #bar .c { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .slide { display:none; position:fixed; top:42px; bottom:34px; left:0; right:0;
+    padding:18px 28px; overflow:auto; flex-direction:column; }
+  .slide.on { display:flex; }
+  h1 { font-size:34px; margin:.2em 0; }
+  h2 { font-size:24px; margin:.1em 0 .3em; color:var(--accent); }
+  p,li { font-size:17px; line-height:1.5; }
+  ul { margin:.3em 0; padding-left:1.2em; }
+  .sub { color:var(--dim); }
+  kbd { background:#21262d; border:1px solid var(--line); border-radius:4px;
+    padding:1px 7px; font-family:Consolas,monospace; color:#e6edf3; }
+  .wrap { display:flex; gap:22px; flex:1; min-height:0; }
+  .wrap img { flex:1; min-width:0; object-fit:contain; align-self:flex-start;
+    max-height:100%; border:1px solid var(--line); border-radius:8px; background:#000; }
+  .side { width:34%; max-width:430px; }
+  .full { display:flex; align-items:center; justify-content:center; flex:1; min-height:0; }
+  .full img { max-width:100%; max-height:100%; border:1px solid var(--line);
+    border-radius:8px; }
+  .center { text-align:center; justify-content:center; align-items:center; }
+  table { border-collapse:collapse; font-size:15px; }
+  td,th { border:1px solid var(--line); padding:5px 12px; text-align:left; }
+  th { color:var(--accent); }
+  code { background:#161b22; padding:1px 6px; border-radius:4px; font-size:.92em; }
+  #nav { position:fixed; bottom:0; left:0; right:0; height:34px; display:flex;
+    align-items:center; justify-content:center; gap:14px; border-top:1px solid var(--line);
+    background:#161b22; color:var(--dim); font-size:13px; }
+  #nav button { background:#21262d; color:var(--fg); border:1px solid var(--line);
+    border-radius:5px; padding:2px 12px; cursor:pointer; }
+  .pill { display:inline-block; background:#21262d; border:1px solid var(--line);
+    border-radius:20px; padding:2px 12px; margin:3px 4px 0 0; font-size:14px; }
+</style>
+</head>
+<body>
+<div id="bar"><span class="t">gitkit — 讓 SVN 團隊看見 git</span><span class="c" id="ctr"></span></div>
+
+<!-- 1 -->
+<section class="slide center">
+  <h1>gitkit</h1>
+  <p style="font-size:21px">一個讓團隊從 <b>SVN 遷移到 git</b> 時，能<b>看見</b> git 在做什麼的終端 UI（TUI）</p>
+  <p class="sub">三階段索引 · 本地/遠端 · 分支拓樸 · merge/衝突 · revert —— 用畫面理解，而不是背指令</p>
+  <p class="sub">部署目標：CentOS 7 · 系統 git <b>1.8.3.1</b>(2013) · 離線 · 無 root · miniconda Py3.9</p>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <h2>軟體目標與架構</h2>
+  <div class="wrap">
+    <div class="side">
+      <p>把 git 的狀態畫成一張儀表板，所有操作都有<b>確認、預覽、與防呆</b>。</p>
+      <p><b>分層</b>（每層只做一件事）：</p>
+      <ul>
+        <li><b>TUI</b>：鍵位 / 面板 / 泳道圖</li>
+        <li><b>Flow</b>：安全寫入邊界、預覽、git 錯誤→中文</li>
+        <li><b>Backend</b>：唯一碰 git 的層（1.8 相容）</li>
+      </ul>
+      <p class="sub">換 git 只需重寫 Backend，上層不動。</p>
+    </div>
+    <img src="img/01_dashboard.svg" alt="dashboard">
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <h2>介面總覽</h2>
+  <div class="wrap">
+    <img src="img/01_dashboard.svg" alt="dashboard">
+    <div class="side">
+      <p><b>左欄</b>：Untracked / Modified / Staged（三階段索引）</p>
+      <p><b>中間 Tree</b>：分支拓樸泳道圖<br>
+        <span class="sub">●│ 實心＝已推到遠端；○╎ 空心/虛線＝本地未推；◆＝merge；HEAD 反白閃爍</span></p>
+      <p><b>下方 Info</b>：選取項目的檔案清單與 diff / commit 訊息</p>
+      <p><b>狀態列</b>：常用鍵提示</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <h2>鍵位速查（按 <kbd>?</kbd>）</h2>
+  <div class="full"><img src="img/02_help.svg" alt="help"></div>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <h2>暫存與提交 ①：看見變更</h2>
+  <div class="wrap">
+    <img src="img/03_staging.svg" alt="staging">
+    <div class="side">
+      <p>改了 <code>util.py</code>、新增 <code>NOTES.txt</code> 後，左欄立刻分流：</p>
+      <ul><li><b>Modified</b>：已追蹤、有變更</li><li><b>Untracked</b>：git 還不認識的新檔</li></ul>
+      <p>在面板上選檔，下方 Info 顯示該檔 diff。</p>
+      <p><span class="pill"><kbd>Space</kbd> 暫存/取消</span><span class="pill"><kbd>d</kbd> 丟棄(≈svn revert)</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <h2>暫存與提交 ②：暫存後</h2>
+  <div class="wrap">
+    <img src="img/04_staged.svg" alt="staged">
+    <div class="side">
+      <p>按 <kbd>Space</kbd> 後檔案移到 <b>Staged</b>，Tree 頂端出現
+        <code>◌ N staged</code> 的虛擬節點，提醒「待提交」。</p>
+      <p>接著按 <kbd>c</kbd> 輸入訊息即可 commit。</p>
+      <p class="sub">每個寫入動作都會在 Info 列閃出實際執行的 <code>git</code> 指令。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="slide">
+  <h2>指令紀錄（按 <kbd>o</kbd>）</h2>
+  <div class="wrap">
+    <img src="img/05_cmdlog.svg" alt="command log">
+    <div class="side">
+      <p>列出最近執行過的 <b>git 指令與結果</b>（最新在上）：</p>
+      <ul><li>黃色＝指令</li><li>綠色 ✓＝成功</li><li>紅色 ⚠＝失敗</li></ul>
+      <p>學習者可隨時回顧「剛剛那個動作，背後到底跑了什麼 git」。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="slide">
+  <h2>分支切換（按 <kbd>l</kbd>）</h2>
+  <div class="wrap">
+    <img src="img/06_branches.svg" alt="branches">
+    <div class="side">
+      <p>懸浮視窗列出 <b>Local / Remote</b> 分支，可打字即時過濾。</p>
+      <p>Enter checkout；選到 remote 分支會自動建本地 tracking 分支，<b>不會進 detached</b>。</p>
+      <p class="sub">做成懸浮視窗，長分支名不會擠壓 Tree。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="slide">
+  <h2>建立分支（按 <kbd>b</kbd>）</h2>
+  <div class="wrap">
+    <img src="img/07_newbranch.svg" alt="new branch">
+    <div class="side">
+      <p>輸入名稱即<b>建立並切換過去</b>（branch + checkout 一步到位）。</p>
+      <p>若在 detached HEAD 想 commit，工具會先請你建立分支，避免 commit 遺失。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide">
+  <h2>流程防呆 ①：push 前偵測落後/分歧</h2>
+  <div class="wrap">
+    <img src="img/08_push_guard.svg" alt="push guard">
+    <div class="side">
+      <p>Bob 的 <code>master</code> 與 <code>origin/master</code> <b>已分歧</b>（領先1/落後5）。</p>
+      <p>直接 <kbd>P</kbd> push 會被遠端拒；工具<b>先攔下來</b>：</p>
+      <ul><li><kbd>i</kbd> 先整合遠端再 push</li><li><kbd>y</kbd> 仍直接 push</li>
+          <li><kbd>f</kbd> fetch 重新檢查</li></ul>
+      <p class="sub">merge / push / pull 都有同一套防呆。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="slide">
+  <h2>流程防呆 ②：pull 分歧 → 整合</h2>
+  <div class="wrap">
+    <img src="img/09_pull_guard.svg" alt="pull guard">
+    <div class="side">
+      <p>分歧時 <code>pull --ff-only</code> 無法快轉，工具改提供：</p>
+      <ul><li><kbd>i</kbd> 用合併方式整合遠端更新（可能有衝突）</li>
+          <li><kbd>f</kbd> fetch 重新檢查</li></ul>
+      <p><kbd>f</kbd> 不自動連線——讓使用者學會「先 fetch 再決定」。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="slide">
+  <h2>衝突解決畫面</h2>
+  <div class="wrap">
+    <img src="img/10_conflict.svg" alt="conflict">
+    <div class="side">
+      <p>整合撞衝突時<b>自動彈出</b>引導畫面：</p>
+      <ul>
+        <li>左欄：衝突檔清單</li>
+        <li>右側：<span style="color:#98e024">◤我方</span> / <span style="color:#58a6ff">◥對方</span> 標色顯示 <code>&lt;&lt;&lt; === &gt;&gt;&gt;</code></li>
+      </ul>
+      <p><span class="pill"><kbd>o</kbd> 採用我方</span><span class="pill"><kbd>t</kbd> 採用對方</span>
+         <span class="pill"><kbd>e</kbd> 已手動編輯</span><span class="pill"><kbd>c</kbd> 完成</span>
+         <span class="pill"><kbd>a</kbd> 放棄</span></p>
+      <p class="sub">同一畫面也用於 revert 衝突（只是換口吻）。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="slide">
+  <h2>revert：安全回退（按 <kbd>v</kbd>）</h2>
+  <div class="wrap">
+    <img src="img/11_revert_confirm.svg" alt="revert">
+    <div class="side">
+      <p><b>revert ≠ reset</b>：產生一個<b>反向 commit</b> 抵銷舊的，<b>不改寫歷史</b>，可安全推共享分支。</p>
+      <p>對照 SVN：SVN 的 <code>revert</code> ≈ git 的 <code>checkout -- file</code>；git 的 <code>revert</code> 是另一回事。</p>
+      <p>可針對 Tree 上<b>任一個 commit</b>，結果疊在目前 HEAD 之上。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 14 -->
+<section class="slide">
+  <h2>revert 一個 merge：選要保留的母系</h2>
+  <div class="wrap">
+    <img src="img/12_revert_merge.svg" alt="revert merge">
+    <div class="side">
+      <p>merge commit（◆）有兩個父，git 需要知道保留哪條主線。</p>
+      <p>工具跳出選單讓你挑 <b>mainline（第 1 / 第 2 父系）</b>，並顯示各父 commit，再執行
+         <code>git revert -m &lt;n&gt;</code>。</p>
+      <p class="sub">若 revert 撞衝突，一樣進上一張的衝突解決畫面。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 15 -->
+<section class="slide">
+  <h2>Demo 環境（<code>.fixtures/</code>）</h2>
+  <div class="wrap">
+    <div class="side" style="width:46%;max-width:560px">
+      <p>本投影片所有畫面來自這組情境：</p>
+      <ul>
+        <li><code>remote.git</code> — 共用 bare 遠端</li>
+        <li><code>local_user1</code>（alice）</li>
+        <li><code>local_user2</code>（bob）</li>
+      </ul>
+      <p class="sub">用法：<code>python -m gitkit .fixtures/local_user1</code></p>
+    </div>
+    <div class="side" style="flex:1">
+      <p><b>劇情</b>（commit / branch / merge / 分歧 / 衝突 / revert）：</p>
+      <ol style="font-size:15px;line-height:1.6">
+        <li>alice：3 個 commit → push <code>master</code></li>
+        <li>bob：clone（停在第 3 個 commit）</li>
+        <li>alice：開 <code>feature/login</code>、主線也提交 → <b>非 ff merge</b>(◆) → 改 greet → push</li>
+        <li>bob：<code>bobfix</code> 改<b>同一行</b> greet → 併回 master（未 pull）→ <b>分歧</b></li>
+        <li>bob：pull → 整合 → <b>衝突</b> → 解決</li>
+        <li>alice：對任一 commit / 對 merge ◆ 做 <b>revert</b></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- 16 -->
+<section class="slide">
+  <h2>鍵位總表</h2>
+  <table>
+    <tr><th>分類</th><th>鍵</th><th>動作</th></tr>
+    <tr><td rowspan="2">導覽</td><td><kbd>↑↓ / j k</kbd> · <kbd>Tab</kbd></td><td>面板內移動 · 切換面板</td></tr>
+    <tr><td><kbd>Enter</kbd> · <kbd>Esc</kbd></td><td>展開 diff / 切換 · 返回 Tree</td></tr>
+    <tr><td rowspan="2">暫存/提交</td><td><kbd>Space</kbd> · <kbd>d</kbd></td><td>暫存/取消 · 丟棄變更</td></tr>
+    <tr><td><kbd>c</kbd></td><td>commit（輸入訊息）</td></tr>
+    <tr><td rowspan="3">分支/遠端</td><td><kbd>l</kbd> · <kbd>b</kbd> · <kbd>m</kbd></td><td>分支清單 · 建立分支 · 合併</td></tr>
+    <tr><td><kbd>f</kbd> · <kbd>p</kbd> · <kbd>P</kbd></td><td>fetch · pull · push（皆有落後/分歧防呆）</td></tr>
+    <tr><td><kbd>v</kbd> · <kbd>x</kbd></td><td>revert · 解決 merge/revert 衝突</td></tr>
+    <tr><td>其他</td><td><kbd>o</kbd> · <kbd>r</kbd> · <kbd>?</kbd> · <kbd>s</kbd> · <kbd>q</kbd></td><td>指令紀錄 · 重載 · 說明 · 設定 · 離開</td></tr>
+  </table>
+  <p style="margin-top:18px" class="sub">原始碼與架構說明：<code>docs/code-review.md</code> · <code>docs/architecture/layers.md</code></p>
+</section>
+
+<div id="nav">
+  <button onclick="go(-1)">‹ 上一頁</button>
+  <span>方向鍵 / 空白鍵切換 · 點左右半邊翻頁</span>
+  <button onclick="go(1)">下一頁 ›</button>
+</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  function show(n){ slides[i].classList.remove('on'); i=Math.max(0,Math.min(slides.length-1,n));
+    slides[i].classList.add('on'); document.getElementById('ctr').textContent=(i+1)+' / '+slides.length; }
+  function go(d){ show(i+d); }
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){go(1);e.preventDefault();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(-1);e.preventDefault();}
+    else if(e.key==='Home'){show(0);} else if(e.key==='End'){show(slides.length-1);}
+  });
+  document.addEventListener('click',e=>{ if(e.target.closest('#nav')||e.target.closest('a'))return;
+    go(e.clientX < window.innerWidth/2 ? -1 : 1); });
+  show(0);
+</script>
+</body>
+</html>
