@@ -173,7 +173,7 @@ else:                   kind = "diverged"    # 兩邊都動 → 需真合併
 
 ### 3.4 串到衝突解決
 
-`integrate` / `merge` 撞衝突 → `_run_flow()` 偵測 `is_merging()` 自動開 `ConflictModal`
+`integrate` / `merge` 撞衝突 → `_run_flow()` 偵測 `pending_op()`（見 §5）自動開 `ConflictModal`
 （ours / theirs / manual → complete / abort）。所以「分歧 → 整合 → 衝突 → 解決」整條在工具內走得完。
 
 ---
@@ -200,12 +200,125 @@ git 的 `revert` 是另一回事。
 > Review 重點：revert 與 #3 的衝突解決天然相接——同一個 `ConfirmModal`/`SelectModal`/
 > `ConflictModal` 被複用，只是依 `pending_op` 換口吻。1.8-safe：`revert --no-edit/-m/--abort` 皆可。
 
+---
+
+## 5. 衝突解決畫面的一般化（merge / revert 共用）
+
+衝突畫面原本只為 merge 寫。要讓 revert 也能共用，關鍵是「**目前進行中的是哪種操作**」
+不能再寫死成 merge。
+
+### 5.1 問題：git 用不同的狀態檔記錄「正在做什麼」
+
+操作中途卡在衝突時，git 在 `.git/` 留一個 pending 狀態檔：
+
+```sh
+git merge feature   # 卡住 → .git/MERGE_HEAD
+git revert <sha>    # 卡住 → .git/REVERT_HEAD   （不是 MERGE_HEAD！）
+```
+
+舊程式碼只認 `MERGE_HEAD`：
+
+```python
+def is_merging(self) -> bool:                       # 舊
+    code, _, _ = self._run_full(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+    return code == 0
+```
+
+於是 revert 衝突時 `is_merging()` 回 `False` → 畫面不會自動開；硬開後 `abort` 會去跑
+`git merge --abort`（沒有 MERGE_HEAD）而報錯。
+
+### 5.2 修法：抽出單一真相 `pending_op()`
+
+```python
+# backend (cli_git.py)
+def pending_op(self) -> str | None:
+    for head, name in (("MERGE_HEAD", "merge"),
+                       ("REVERT_HEAD", "revert"),
+                       ("CHERRY_PICK_HEAD", "cherry-pick")):
+        code, _, _ = self._run_full(["rev-parse", "-q", "--verify", head])
+        if code == 0:
+            return name
+    return None
+```
+
+| `pending_op()` | 狀態檔 | abort 指令 | 畫面口吻 |
+|---|---|---|---|
+| `"merge"`  | MERGE_HEAD  | `git merge --abort`  | 「解決**合併**衝突」、對方＝分支名 |
+| `"revert"` | REVERT_HEAD | `git revert --abort` | 「解決**revert**衝突」、對方＝還原後的內容 |
+
+### 5.3 三個使用點都改讀它
+
+```python
+# (a) 要不要自動開畫面 — _open_conflict_resolver
+conflicted = self.be.pending_op() is not None and bool(self.be.unmerged_paths())
+
+# (b) 頂部橫幅 — _load
+op = be.pending_op()
+op_zh = {"revert": "revert", "cherry-pick": "cherry-pick"}.get(op, "合併")
+#   → "⚠ revert進行中（按 x 解決衝突）"
+
+# (c) ConflictModal 標題 / ours-theirs 文案
+is_revert = self.flow.pending_op() == "revert"
+verb = "revert" if is_revert else "合併"          # 標題：解決{verb}衝突
+ours = "目前內容" if is_revert else "目前分支"     # 我方稱呼
+```
+
+「對方」的名稱也跟著切：
+
+```python
+def incoming_label(self) -> str:
+    if self.be.pending_op() == "revert":
+        return "revert 後（還原）的內容"
+    return self.be.merging_branch() or "對方分支"
+```
+
+### 5.4 abort 分派、complete 共用
+
+按鍵不變（`a` 放棄、`c` 完成），底層依狀態分流：
+
+```python
+def abort(self) -> str:
+    if self.be.pending_op() == "revert":
+        return self._do(self.be.revert_abort, "已放棄 revert，回到原狀")  # git revert --abort
+    return self._do(self.be.merge_abort, "已放棄合併，回到合併前的狀態")   # git merge  --abort
+
+def complete(self) -> str:
+    if self.be.unmerged_paths():
+        raise FlowError("還有未解決的衝突，無法完成")
+    op = self.be.pending_op()
+    if op == "revert" and not self.be.diff_files(staged=True):    # 空 revert 防呆
+        raise FlowError("revert 後沒有任何變更（等於未撤銷）；若要結束請按『放棄 revert』")
+    c = self.be.complete_merge()        # git commit --no-edit —— merge 與 revert 都用這條
+    verb = "revert" if op == "revert" else "合併"
+    return f"已完成{verb} {c.short_sha}：{c.subject}"
+```
+
+> 只有 **abort** 必須分流；**complete** 兩者都用 `git commit --no-edit`，因為 commit 一發出，
+> git 會自己看 `MERGE_HEAD`/`REVERT_HEAD` 完成對應操作。
+
+### 5.5 範例：同一段流程，兩種口吻
+
+```
+選 c2 → v → Confirm → y
+  flow.revert(c2) → git revert --no-edit <c2>      ← 衝突，git 留 REVERT_HEAD
+  _run_flow 結束呼叫 _open_conflict_resolver()：
+     pending_op()=="revert" 且有 unmerged → 自動開 ConflictModal
+  ConflictModal 讀 pending_op()=="revert"：
+     標題「解決revert衝突」、對方＝「revert 後（還原）的內容」
+  t（採用對方）→ c → flow.complete() → git commit --no-edit → 「已完成revert …」
+```
+
+把每個 `c2` 換成 `git merge feature`，**UI 一行都不用改**——`pending_op()` 回 `"merge"`，
+標題就變「解決合併衝突」、對方變分支名、`a` 變 `git merge --abort`。這就是一般化：
+**UI/流程只寫一份，差異全收斂到 `pending_op()` 這個單一判斷點**。
+
 ## 建議的看圖順序
 
 1. `docs/architecture/layers.md` → 先確認分層與資料流（`_load` 一次取數）。
 2. `graph/lanes.py`：`build_layout` → `_decompose` → `_assign_columns` → `render_graph`。
 3. `ui/app.py`：`_after_branch` / `_guard` / `action_push` → UI 如何只透過 Flow 動作、並記錄/閃示指令。
 4. `core/flow.py`：`upstream_state` + `update_then_*` → 流程控制與安全邊界。
+5. `backend/cli_git.py` `pending_op` + `core/flow.py` `abort`/`complete` → merge/revert 共用衝突畫面（§5）。
 
 相關文件：`docs/architecture/layers.md`、`docs/backend/git-1.8-command-map.md`、
 `docs/ui/tree-dag-rendering.md`。
