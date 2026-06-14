@@ -126,9 +126,21 @@ class GitBackend(ABC):
     @abstractmethod
     def merge(self, name: str) -> MergeResult: ...
 
-    # ── conflict resolution (mid-merge) ──────────────────────────
+    @abstractmethod
+    def revert(self, sha: str, mainline: int | None = None) -> MergeResult: ...
+
+    @abstractmethod
+    def describe_commit(self, sha: str) -> str: ...  # 'shortsha subject'
+
+    # ── conflict resolution (mid-merge / mid-revert) ─────────────
+    @abstractmethod
+    def pending_op(self) -> str | None: ...  # 'merge' | 'revert' | 'cherry-pick' | None
+
     @abstractmethod
     def is_merging(self) -> bool: ...  # a merge is in progress (MERGE_HEAD exists)
+
+    @abstractmethod
+    def revert_abort(self) -> None: ...  # back to pre-revert state
 
     @abstractmethod
     def unmerged_paths(self) -> list[str]: ...  # files with conflicts

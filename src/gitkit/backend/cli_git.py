@@ -267,11 +267,36 @@ class CliGitBackend(GitBackend):
         conflicts = self._unmerged_paths()
         return MergeResult(ok=False, fast_forward=False, conflicts=conflicts)
 
+    def revert(self, sha: str, mainline: int | None = None) -> MergeResult:
+        # creates an inverse commit on top of HEAD; never rewrites history.
+        args = ["revert", "--no-edit"]
+        if mainline is not None:  # required to revert a merge commit
+            args += ["-m", str(mainline)]
+        args.append(sha)
+        code, _, _ = self._run_full(args)
+        if code == 0:
+            return MergeResult(ok=True, fast_forward=False, conflicts=[])
+        return MergeResult(ok=False, fast_forward=False,
+                           conflicts=self._unmerged_paths())
+
+    def describe_commit(self, sha: str) -> str:
+        out = self._text(["log", "-1", "--format=%h %s", sha], check=False).strip()
+        return out or sha[:7]
+
     def _unmerged_paths(self) -> list[str]:
         data = self._run(["diff", "--name-only", "--diff-filter=U", "-z"], check=False)
         return [p.decode("utf-8", "surrogateescape") for p in data.split(b"\x00") if p]
 
-    # ── conflict resolution (mid-merge) ──────────────────────────
+    # ── conflict resolution (mid-merge / mid-revert) ─────────────
+    def pending_op(self) -> str | None:
+        for head, name in (("MERGE_HEAD", "merge"),
+                           ("REVERT_HEAD", "revert"),
+                           ("CHERRY_PICK_HEAD", "cherry-pick")):
+            code, _, _ = self._run_full(["rev-parse", "-q", "--verify", head])
+            if code == 0:
+                return name
+        return None
+
     def is_merging(self) -> bool:
         code, _, _ = self._run_full(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         return code == 0
@@ -309,8 +334,11 @@ class CliGitBackend(GitBackend):
     def merge_abort(self) -> None:
         self._run(["merge", "--abort"])  # 1.7.4+; restores pre-merge HEAD/worktree
 
+    def revert_abort(self) -> None:
+        self._run(["revert", "--abort"])  # 1.7.8+; restores pre-revert state
+
     def complete_merge(self) -> Commit:
-        self._run(["commit", "--no-edit"])  # uses the prepared MERGE_MSG
+        self._run(["commit", "--no-edit"])  # completes a merge OR revert (MERGE_MSG)
         return self.log(limit=1, all_refs=False)[0]
 
     # ── remote ───────────────────────────────────────────────────

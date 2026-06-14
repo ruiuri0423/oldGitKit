@@ -112,7 +112,7 @@ class WriteCase(unittest.TestCase):
         self._make_conflict()
         self.flow.resolve_theirs("a.txt")          # take 'other' side
         self.assertEqual(self.flow.conflicts(), [])
-        msg = self.flow.complete_merge()
+        msg = self.flow.complete()
         self.assertIn("已完成合併", msg)
         self.assertFalse(self.flow.is_merging())
         with open(os.path.join(self.d, "a.txt")) as f:
@@ -121,7 +121,7 @@ class WriteCase(unittest.TestCase):
     def test_resolve_ours_keeps_our_side(self):
         self._make_conflict()
         self.flow.resolve_ours("a.txt")
-        self.flow.complete_merge()
+        self.flow.complete()
         with open(os.path.join(self.d, "a.txt")) as f:
             self.assertEqual(f.read(), "main change\n")
 
@@ -130,21 +130,85 @@ class WriteCase(unittest.TestCase):
         _write(self.d, "a.txt", "hand merged\n")
         self.flow.mark_resolved(["a.txt"])
         self.assertEqual(self.flow.conflicts(), [])
-        self.flow.complete_merge()
+        self.flow.complete()
         with open(os.path.join(self.d, "a.txt")) as f:
             self.assertEqual(f.read(), "hand merged\n")
 
     def test_complete_blocked_while_unresolved(self):
         self._make_conflict()
         with self.assertRaises(FlowError):
-            self.flow.complete_merge()  # still has conflicts
+            self.flow.complete()  # still has conflicts
 
     def test_abort_restores_pre_merge(self):
         self._make_conflict()
-        self.flow.abort_merge()
+        self.flow.abort()
         self.assertFalse(self.flow.is_merging())
         with open(os.path.join(self.d, "a.txt")) as f:
             self.assertEqual(f.read(), "main change\n")
+
+    # ── revert ───────────────────────────────────────────────────
+    def test_revert_clean(self):
+        _write(self.d, "a.txt", "hello\nworld\n")
+        _git(self.d, "commit", "-qam", "add world")
+        head = self.be.repo_state().head_sha
+        msg = self.flow.revert(head)            # undo the last commit
+        self.assertIn("反向 commit", msg)
+        with open(os.path.join(self.d, "a.txt")) as f:
+            self.assertEqual(f.read(), "hello\n")   # back to before "add world"
+        self.assertFalse(self.flow.in_progress())
+
+    def test_revert_conflict_then_resolve(self):
+        # revert an OLDER commit whose lines a later commit also touched → conflict
+        _write(self.d, "a.txt", "v1\n"); _git(self.d, "commit", "-qam", "c1")
+        target = self.be.repo_state().head_sha
+        _write(self.d, "a.txt", "v2\n"); _git(self.d, "commit", "-qam", "c2")
+        with self.assertRaises(FlowError):
+            self.flow.revert(target)            # conflict
+        self.assertEqual(self.flow.pending_op(), "revert")
+        self.assertEqual(self.flow.conflicts(), ["a.txt"])
+        self.flow.resolve_theirs("a.txt")       # take the revert's (restored) side
+        msg = self.flow.complete()
+        self.assertIn("revert", msg)
+        self.assertFalse(self.flow.in_progress())
+
+    def test_revert_empty_resolution_is_rejected(self):
+        # resolving every conflict to "ours" leaves nothing to revert → clear error
+        _write(self.d, "a.txt", "v1\n"); _git(self.d, "commit", "-qam", "c1")
+        target = self.be.repo_state().head_sha
+        _write(self.d, "a.txt", "v2\n"); _git(self.d, "commit", "-qam", "c2")
+        with self.assertRaises(FlowError):
+            self.flow.revert(target)
+        self.flow.resolve_ours("a.txt")         # keep current → revert undoes nothing
+        with self.assertRaises(FlowError):
+            self.flow.complete()
+        self.flow.abort()                       # the offered way out
+        self.assertFalse(self.flow.in_progress())
+
+    def test_revert_abort(self):
+        _write(self.d, "a.txt", "v1\n"); _git(self.d, "commit", "-qam", "c1")
+        target = self.be.repo_state().head_sha
+        _write(self.d, "a.txt", "v2\n"); _git(self.d, "commit", "-qam", "c2")
+        with self.assertRaises(FlowError):
+            self.flow.revert(target)
+        self.flow.abort()
+        self.assertFalse(self.flow.in_progress())
+        with open(os.path.join(self.d, "a.txt")) as f:
+            self.assertEqual(f.read(), "v2\n")  # restored
+
+    def test_revert_merge_needs_mainline(self):
+        # build a merge commit, then revert it with mainline=1
+        self.be.create_branch("br"); self.be.checkout("br")
+        _write(self.d, "b.txt", "b\n"); _git(self.d, "add", "-A")
+        _git(self.d, "commit", "-qm", "br work")
+        self.be.checkout("main")
+        _write(self.d, "a.txt", "main2\n"); _git(self.d, "commit", "-qam", "main work")
+        self.be.merge("br")                     # non-ff merge commit
+        head = self.be.repo_state().head_sha
+        with self.assertRaises(FlowError):      # no mainline → git refuses
+            self.flow.revert(head)
+        self.assertFalse(self.flow.in_progress())
+        msg = self.flow.revert(head, mainline=1)   # keep parent 1 (main)
+        self.assertIn("反向 commit", msg)
 
 
 class TranslateCase(unittest.TestCase):

@@ -230,7 +230,27 @@ class Flow:
             raise FlowError(f"整合衝突,請手動解決:{', '.join(r.conflicts[:5])}")
         raise FlowError(f"整合 {info.upstream} 失敗")
 
-    # ── conflict resolution (mid-merge) ──────────────────────────
+    # ── revert (safe rollback: an inverse commit, no history rewrite) ──
+    def revert(self, sha: str, mainline: int = None) -> str:
+        if self.be.current_branch() is None:
+            raise FlowError("detached HEAD,無法 revert(會產生 commit,請先切到分支)")
+        try:
+            r = self.be.revert(sha, mainline=mainline)
+        except BackendError as e:
+            raise FlowError(translate(e.stderr))
+        if r.ok:
+            return f"已建立反向 commit 撤銷 {sha[:7]}(歷史未改寫)"
+        if r.conflicts:
+            raise FlowError(f"revert 衝突,請手動解決:{', '.join(r.conflicts[:5])}")
+        raise FlowError(f"revert {sha[:7]} 失敗")
+
+    # ── conflict resolution (mid-merge / mid-revert) ─────────────
+    def pending_op(self) -> str:
+        return self.be.pending_op()
+
+    def in_progress(self) -> bool:
+        return self.be.pending_op() is not None
+
     def is_merging(self) -> bool:
         return self.be.is_merging()
 
@@ -241,6 +261,8 @@ class Flow:
         return self.be.conflict_text(path)
 
     def incoming_label(self) -> str:
+        if self.be.pending_op() == "revert":
+            return "revert 後(還原)的內容"
         return self.be.merging_branch() or "對方分支"
 
     def resolve_ours(self, path: str) -> str:
@@ -255,17 +277,26 @@ class Flow:
         return self._do(lambda: self.be.stage(paths),
                         f"已標記為已解決:{len(paths)} 個檔案")
 
-    def abort_merge(self) -> str:
+    def abort(self) -> str:
+        """Abort the in-progress merge or revert, restoring the prior state."""
+        if self.be.pending_op() == "revert":
+            return self._do(self.be.revert_abort, "已放棄 revert,回到原狀")
         return self._do(self.be.merge_abort, "已放棄合併,回到合併前的狀態")
 
-    def complete_merge(self) -> str:
+    def complete(self) -> str:
+        """Commit the resolved merge or revert."""
         if self.be.unmerged_paths():
-            raise FlowError("還有未解決的衝突,無法完成合併")
+            raise FlowError("還有未解決的衝突,無法完成")
+        op = self.be.pending_op()
+        if op == "revert" and not self.be.diff_files(staged=True):
+            # everything resolved to "ours" → the revert undoes nothing
+            raise FlowError("revert 後沒有任何變更(等於未撤銷);若要結束請按『放棄 revert』")
         try:
-            c: Commit = self.be.complete_merge()
+            c: Commit = self.be.complete_merge()  # commit --no-edit (merge or revert)
         except BackendError as e:
             raise FlowError(translate(e.stderr))
-        return f"已完成合併 {c.short_sha}:{c.subject}"
+        verb = "revert" if op == "revert" else "合併"
+        return f"已完成{verb} {c.short_sha}:{c.subject}"
 
     # ── remote ───────────────────────────────────────────────────
     def fetch(self, remote: str) -> str:

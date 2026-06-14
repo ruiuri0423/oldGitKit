@@ -178,6 +178,28 @@ else:                   kind = "diverged"    # 兩邊都動 → 需真合併
 
 ---
 
+## 4. revert(安全回退）— `action_revert` / `flow.revert`
+
+教學定位：`revert ≠ reset`。`git revert <sha>` 產生一個**反向 commit** 抵銷舊的，
+**不改寫歷史**，可安全推共享分支。對照 SVN：SVN 的 `revert` ≈ git 的 `checkout -- file`，
+git 的 `revert` 是另一回事。
+
+- **作用範圍**：目標可以是 Tree 上**任一個 commit**（不限 HEAD）；落點永遠是目前 HEAD 之上的新 commit。
+- **觸發**（按 `v`，`action_revert`）：
+  - 一般單父 commit → `ConfirmModal` 預覽 →`git revert --no-edit <sha>`。
+  - merge commit（◆，兩個父）→ 先跳 `SelectModal` 讓使用者選 mainline（保留哪個父系），
+    再 `git revert -m <n> --no-edit <sha>`。
+  - detached HEAD → 拒絕（會產生 commit）。
+- **衝突**：revert 撞衝突會設 `REVERT_HEAD`（非 `MERGE_HEAD`）。因此把衝突偵測一般化成
+  `Backend.pending_op()`（回 `merge`/`revert`/`cherry-pick`/None）；`_open_conflict_resolver`、
+  `_load` 橫幅、`ConflictModal` 標題與 ours/theirs 文案都改讀 `pending_op`。`abort()` 依
+  `pending_op` 分派 `merge --abort` / `revert --abort`；`complete()` 兩者都用 `commit --no-edit`。
+- **空 revert 防呆**：若把衝突全解成「我方」→ 等於沒撤銷、`commit` 會報 nothing-to-commit；
+  `complete()` 先用 `diff_files(staged=True)` 偵測並給中文提示，請改按「放棄 revert」。
+
+> Review 重點：revert 與 #3 的衝突解決天然相接——同一個 `ConfirmModal`/`SelectModal`/
+> `ConflictModal` 被複用，只是依 `pending_op` 換口吻。1.8-safe：`revert --no-edit/-m/--abort` 皆可。
+
 ## 建議的看圖順序
 
 1. `docs/architecture/layers.md` → 先確認分層與資料流（`_load` 一次取數）。

@@ -62,7 +62,8 @@ HELP_TEXT = """[b]gitkit — keys[/b]
   f / p / P    fetch / pull --ff-only / push
                (merge/push/pull warn first if the branch is behind /
                 diverged from its upstream — fetch & update before)
-  x            resolve merge conflicts (ours / theirs / manual, then commit)
+  v            revert the selected commit (safe: inverse commit, no rewrite)
+  x            resolve merge/revert conflicts (ours / theirs / manual, then commit)
 
   [b]other[/b]
   o            command log (recent git commands + results)
@@ -499,7 +500,8 @@ class ConflictModal(ModalScreen):
             yield Static("", id="cfoot")
 
     def on_mount(self) -> None:
-        self.query_one("#conflictbox").border_title = "解決合併衝突"
+        verb = "revert" if self.flow.pending_op() == "revert" else "合併"
+        self.query_one("#conflictbox").border_title = f"解決{verb}衝突"
         self._refresh()
         self.query_one("#clist", ListView).focus()
 
@@ -512,19 +514,22 @@ class ConflictModal(ModalScreen):
         for p in paths:
             lv.append(_ConflictItem(p))
 
+        is_revert = self.flow.pending_op() == "revert"
+        verb = "revert" if is_revert else "合併"
+        ours = "目前內容" if is_revert else "目前分支"
         head = Text()
-        head.append("合併衝突", style="bold")
-        head.append(f"   我方(ours)= 目前分支    對方(theirs)= "
+        head.append(f"{verb}衝突", style="bold")
+        head.append(f"   我方(ours)= {ours}    對方(theirs)= "
                     f"{self.flow.incoming_label()}\n", style="dim")
         if paths:
             head.append(f"還有 {len(paths)} 個檔案有衝突 — 逐一處理", style="yellow")
         else:
-            head.append("✓ 全部已解決 — 按 c 完成合併", style="bold green")
+            head.append(f"✓ 全部已解決 — 按 c 完成{verb}", style="bold green")
         self.query_one("#chead", Static).update(head)
 
         foot = Text()
         for k, lbl in [("o", "採用我方"), ("t", "採用對方"), ("e", "已手動編輯"),
-                       ("c", "完成合併"), ("a", "放棄合併"), ("Esc", "稍後")]:
+                       ("c", f"完成{verb}"), ("a", f"放棄{verb}"), ("Esc", "稍後")]:
             foot.append(f" {k} ", style="bold black on grey70")
             foot.append(f" {lbl}   ", style="dim")
         if self._note:
@@ -576,9 +581,9 @@ class ConflictModal(ModalScreen):
         elif k == "e" and p:
             self._step(self.flow.mark_resolved, [p])
         elif k == "c":
-            self._finish(self.flow.complete_merge)
+            self._finish(self.flow.complete)
         elif k == "a":
-            self._finish(self.flow.abort_merge)
+            self._finish(self.flow.abort)
         elif k == "escape":
             self.dismiss(("later", None))
 
@@ -674,6 +679,7 @@ class GitkitApp(App):
         ("b", "branch", "branch"),
         ("l", "branches", "branches"),
         ("m", "merge", "merge"),
+        ("v", "revert", "revert"),
         ("x", "conflicts", "resolve conflicts"),
         ("f", "fetch", "fetch"),
         ("p", "pull", "pull"),
@@ -759,10 +765,12 @@ class GitkitApp(App):
         detached = branch is None
         head_short = be.repo_state().head_sha[:7] if detached else ""
         self._trunk_label = branch or f"(detached @ {head_short})"
-        merging = be.is_merging() and bool(be.unmerged_paths())
+        op = be.pending_op()
+        conflicting = op is not None and bool(be.unmerged_paths())
+        op_zh = {"revert": "revert", "cherry-pick": "cherry-pick"}.get(op, "合併")
         self._normal_subtitle = f"{self.repo}  ·  {self._trunk_label}" + (
             "   ⚠ DETACHED HEAD" if detached else "") + (
-            "   ⚠ 合併進行中(按 x 解決衝突)" if merging else "")
+            f"   ⚠ {op_zh}進行中(按 x 解決衝突)" if conflicting else "")
         self.sub_title = self._normal_subtitle
 
         files = be.status()
@@ -962,10 +970,11 @@ class GitkitApp(App):
             self._set_status("沒有進行中的合併衝突")
 
     def _open_conflict_resolver(self) -> bool:
-        """Open the conflict guide if a merge is in progress with unresolved files.
-        Returns True if it opened (or is already open)."""
+        """Open the conflict guide if a merge or revert is in progress with
+        unresolved files. Returns True if it opened (or is already open)."""
         try:
-            conflicted = self.be.is_merging() and bool(self.be.unmerged_paths())
+            conflicted = (self.be.pending_op() is not None
+                          and bool(self.be.unmerged_paths()))
         except BackendError:
             conflicted = False
         if not conflicted or isinstance(self.screen, ConflictModal):
@@ -1150,6 +1159,31 @@ class GitkitApp(App):
         self.action_reload()
         self._flash_command(cmds)
         self._set_status(f"已建立並切換到 {name}")
+
+    def action_revert(self) -> None:
+        """Create an inverse commit undoing the selected Tree commit (safe — no
+        history rewrite). A merge commit prompts for which parent (mainline) to keep."""
+        it = self.query_one("#tree", ListView).highlighted_child
+        if not isinstance(it, CommitItem):
+            self._set_status("⚠ 請在 Tree 選一個 commit 再 revert")
+            return
+        if self.be.current_branch() is None:
+            self._set_status("⚠ detached HEAD,無法 revert(會產生 commit,請先切到分支)")
+            return
+        c = it.commit
+        if c.is_merge:  # merge commit → must pick a mainline parent
+            opts = [f"{i}: 保留第 {i} 父系  {self.be.describe_commit(p)}"
+                    for i, p in enumerate(c.parents, 1)]
+            self.push_screen(
+                SelectModal(f"revert merge {c.short_sha} — 選要保留哪個父系(mainline):",
+                            opts),
+                lambda choice: self._run_flow(self.flow.revert, c.sha,
+                                              int(choice.split(":")[0])) if choice else None)
+            return
+        self.push_screen(
+            ConfirmModal(f"建立一個反向 commit 撤銷\n{c.short_sha}: {c.subject}?\n"
+                         f"(不改寫歷史,原 commit 仍保留)"),
+            lambda ok: self._run_flow(self.flow.revert, c.sha) if ok else None)
 
     def action_merge(self) -> None:
         cur = self.be.current_branch()
