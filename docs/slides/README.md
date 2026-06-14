@@ -1,7 +1,14 @@
 # gitkit 使用說明投影片
 
-直接用瀏覽器打開 **`index.html`** 即可播放（方向鍵 / 空白鍵切換，或點左右半邊翻頁）。
-所有畫面都是 gitkit 實際 TUI 的截圖（`img/*.svg`），投影片本身不需任何相依套件或網路。
+兩種瀏覽方式：
+
+- **桌機**：用瀏覽器打開 **`index.html`** 播放（方向鍵 / 空白鍵切換，或點左右半邊翻頁）。
+- **手機**：直接看 **`gitkit-slides.pdf`**（16 頁、16:9，每張投影片一頁，深色主題）。
+
+所有畫面都是 gitkit 實際 TUI 的截圖（`img/*.svg`），不需任何相依套件或網路。
+
+> PDF 由 `index.html` 用無頭 Chrome 列印產生（`--headless --print-to-pdf`，CSS 以
+> `print-color-adjust: exact` 保留深色背景）。改了投影片後重印即可更新。
 
 ## 想自己動手跑同一組 demo？
 
