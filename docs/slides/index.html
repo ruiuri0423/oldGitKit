@@ -56,6 +56,18 @@
   ul { margin:.2em 0; }
   .legend { font-size:18px; line-height:1.9; }
   .legend .g { color:var(--good); } .legend .b { color:var(--info); }
+  /* enlarged lane-graph legend (slide 4) */
+  .graphgrid { display:grid; grid-template-columns:130px 1fr; gap:10px 30px;
+    align-items:center; max-width:1040px; margin:14px 0 6px; }
+  .graphgrid .g { font-family:Consolas,"Cascadia Mono",monospace; font-size:36px;
+    line-height:1.1; letter-spacing:6px; white-space:pre; text-align:right; }
+  .graphgrid .m { font-size:18.5px; text-align:left; }
+  .graphgrid .m b { color:var(--accent); }
+  .gn { color:var(--good); }   /* ● pushed node   */
+  .gh { color:var(--dim); }    /* ○ hollow (local) */
+  .gm { color:#d2a8ff; }       /* ◆ merge          */
+  .gl { color:#6e87b3; }       /* │ ├ ─ ╮ ╯ lines  */
+  .gd { color:var(--accent); } /* ╎ dashed (local) */
   .tag { font-family:Consolas,monospace; padding:1px 7px; border-radius:4px;
     background:#21262d; border:1px solid var(--line); font-size:15px; }
   #nav { position:fixed; bottom:0; left:0; right:0; height:40px; display:flex;
@@ -112,27 +124,37 @@
   <div class="shot"><img src="img/01_dashboard.svg" alt="dashboard"></div>
 </section>
 
-<!-- 4 how to read the graph -->
-<section class="slide">
-  <p class="step">線圖怎麼看 — 每個符號都有意思</p>
-  <div class="two">
-    <div class="legend">
-      <p><span class="g">●</span> 一個 commit(一筆歷史)。<span class="b">◆</span> 是合併點。</p>
-      <p><span class="tag">HEAD</span> = 你現在站在哪一筆;<span class="tag">master</span>
-         <span class="tag">feature/login</span> 是分支標籤。</p>
-      <p><span class="g">實心 ●</span> = 已經推上遠端;<span style="color:var(--dim)">空心 ○ / 虛線</span>
-         = 只在本地、還沒推。</p>
-      <p><span class="tag">origin/master</span> 標籤 = 遠端目前停在哪 —
-         和你的 <span class="tag">master</span> 差幾格,一看就知道。</p>
-    </div>
-    <div>
-      <p class="hint" style="text-align:left">右邊每一列:<br>
-         線圖　短編號　分支標籤　作者　訊息</p>
-      <p class="conseq"><b>後果提示:</b>把游標停在某一列,下方 Info 會立刻顯示那筆 commit
-         改了哪些檔、訊息是什麼 — 不用切畫面。</p>
-    </div>
+<!-- 4 how to read the graph (zoomed symbols, no full window) -->
+<section class="slide center">
+  <h2>線圖怎麼看 — 認得這幾個符號就會看</h2>
+  <p class="hint">中間那一欄,就是用這些符號把「歷史的分支與合併」畫出來。把它放大來看:</p>
+  <div class="graphgrid">
+    <div class="g"><span class="gh">○</span></div>
+    <div class="m"><b>空心圓</b> = 還沒推送的 commit(只在你本地)</div>
+
+    <div class="g"><span class="gm">◆</span></div>
+    <div class="m"><b>菱形</b> = 合併點(兩條線在這裡合起來)</div>
+
+    <div class="g"><span class="gl">├─╮</span></div>
+    <div class="m"><b>轉角 / 橫線</b> = 分支在這裡岔開或接上</div>
+
+    <div class="g"><span class="gn">●</span> <span class="gd">╎</span></div>
+    <div class="m"><b>實心圓</b> = 已推送的 commit;<b>虛線 ╎</b> = 還沒推送的線段</div>
+
+    <div class="g"><span class="gl">│</span> <span class="gn">●</span></div>
+    <div class="m"><b>直線 │</b> = 一條分支的延續;右邊的 ● 是<b>另一條</b>分支</div>
+
+    <div class="g"><span class="gl">├─╯</span></div>
+    <div class="m"><b>接回</b> = 分支合流 / 分出去的接點</div>
+
+    <div class="g"><span class="gn">●</span></div>
+    <div class="m">一般 commit — 由上(新)往下(舊)排列</div>
   </div>
-  <div class="shot"><img src="img/07_push_guard.svg" alt="graph"></div>
+  <p class="hint" style="max-width:1040px"><b style="color:var(--good)">實心</b> = 已推上遠端、
+     <b style="color:var(--dim)">空心 / 虛線</b> = 只在本地還沒推;
+     <span class="tag">HEAD</span> 你現在站哪 ·
+     <span class="tag">master</span><span class="tag">feature</span> 分支名 ·
+     <span class="tag">origin/…</span> 遠端目前停在哪。</p>
 </section>
 
 <!-- 5 fetch -->
