@@ -24,16 +24,26 @@ def _write(d, name, text):
         f.write(text)
 
 
+def _ensure_main(d):
+    """Normalise the current branch to 'main' on any git version. git < 2.28
+    has no init.defaultBranch and creates 'master'; this keeps the tests (and
+    the CI job that runs against git 1.8.3.1) branch-name-agnostic."""
+    cur = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=d,
+                         capture_output=True, text=True).stdout.strip()
+    if cur != "main":
+        _git(d, "branch", "-M", "main")
+
+
 class WriteCase(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="gitkit_w_")
-        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q", self.d],
-                       check=True)
+        subprocess.run(["git", "init", "-q", self.d], check=True)
         _git(self.d, "config", "user.email", "t@example.com")
         _git(self.d, "config", "user.name", "Tester")
         _write(self.d, "a.txt", "hello\n")
         _git(self.d, "add", "-A")
         _git(self.d, "commit", "-q", "-m", "init")
+        _ensure_main(self.d)  # 'master' on old git, 'main' on new → force 'main'
         self.be = CliGitBackend(root=self.d)
         self.flow = Flow(self.be)
 
@@ -98,13 +108,13 @@ class WriteCase(unittest.TestCase):
         bare = tempfile.mkdtemp(prefix="gitkit_rem_")
         clone = tempfile.mkdtemp(prefix="gitkit_cl_")
         try:
-            subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
-                            "--bare", bare], check=True)
+            subprocess.run(["git", "init", "-q", "--bare", bare], check=True)
             _git(self.d, "remote", "add", "origin", bare)
             _git(self.d, "push", "-q", "-u", "origin", "main")  # main → origin/main
             subprocess.run(["git", "clone", "-q", bare, clone], check=True)
             _git(clone, "config", "user.email", "x@x")
             _git(clone, "config", "user.name", "x")
+            _git(clone, "checkout", "-B", "main", "origin/main")  # on main, any git ver
             _write(clone, "r.txt", "remote\n")
             _git(clone, "add", "-A"); _git(clone, "commit", "-q", "-m", "remote work")
             _git(clone, "push", "-q", "origin", "main")          # remote advances by 1

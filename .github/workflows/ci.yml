@@ -35,3 +35,47 @@ jobs:
 
       - name: Run tests
         run: python -m unittest discover -s tests -v
+
+  # Deployment target is CentOS 7, whose system git is exactly 1.8.3.1 (2013).
+  # This job builds that git and runs the suite against it, so any use of a
+  # newer git feature/atom (e.g. %(upstream:track), git switch) fails CI here.
+  git-1-8-3-1:
+    name: tests on git 1.8.3.1 (CentOS 7 target)
+    runs-on: ubuntu-22.04   # gcc 11 builds 2013-era git cleanly
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Build git 1.8.3.1 from source
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zlib1g-dev
+          curl -fsSL https://mirrors.edge.kernel.org/pub/software/scm/git/git-1.8.3.1.tar.gz -o /tmp/git.tgz \
+            || curl -fsSL https://github.com/git/git/archive/refs/tags/v1.8.3.1.tar.gz -o /tmp/git.tgz
+          tar -xzf /tmp/git.tgz -C /tmp
+          make -C /tmp/git-1.8.3.1 -j"$(nproc)" prefix=/opt/git183 \
+            NO_OPENSSL=1 NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 \
+            CFLAGS="-O2 -fcommon" install
+
+      - name: Pin git 1.8.3.1 on PATH and verify
+        run: |
+          echo "/opt/git183/bin" >> "$GITHUB_PATH"
+          /opt/git183/bin/git --version
+          /opt/git183/bin/git --version | grep -q "1\.8\.3\.1"
+
+      - name: Configure git identity
+        run: |
+          git --version
+          git config --global user.email "ci@example.com"
+          git config --global user.name "gitkit CI"
+
+      # Tests import only gitkit.{backend,core,graph} (no Textual), so PYTHONPATH=src
+      # is enough — this job is purely about git-version compatibility.
+      - name: Run tests against git 1.8.3.1
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
