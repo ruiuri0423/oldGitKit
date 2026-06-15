@@ -270,7 +270,7 @@ class InputModal(ModalScreen):
         with Vertical(id="modalbox"):
             yield Label(self._prompt)
             yield Input(placeholder=self._placeholder, id="inp")
-            yield Label("[Enter] OK    [Esc] cancel", classes="dim")
+            yield Label(Text("[Enter] OK    [Esc] cancel"), classes="dim")
 
     def on_mount(self) -> None:
         self.query_one("#inp", Input).focus()
@@ -305,7 +305,7 @@ class SelectModal(ModalScreen):
             yield Label(self._prompt)
             yield Input(placeholder="/ filter…", id="filter")
             yield ListView(id="opts")
-            yield Label("[Enter] select   [↓] list   [/] filter   [Esc] cancel",
+            yield Label(Text("[Enter] select   [↓] list   [/] filter   [Esc] cancel"),
                         classes="dim")
 
     def on_mount(self) -> None:
@@ -362,7 +362,7 @@ class BranchesModal(ModalScreen):
             yield Label("切換分支 — 選一個 branch 按 Enter checkout")
             yield Input(placeholder="/ filter…", id="filter")
             yield ListView(id="opts")
-            yield Label("[Enter] checkout   [↓] list   [/] filter   [Esc] cancel",
+            yield Label(Text("[Enter] checkout   [↓] list   [/] filter   [Esc] cancel"),
                         classes="dim")
 
     def on_mount(self) -> None:
@@ -478,7 +478,7 @@ class CredentialModal(ModalScreen):
         with Vertical(id="modalbox"):
             yield Label("🔐 " + (self._prompt or "git 需要認證資訊:"))
             yield Input(password=self._secret, id="cred")
-            yield Label("[Enter] 送出    [Esc] 取消", classes="dim")
+            yield Label(Text("[Enter] 送出    [Esc] 取消"), classes="dim")
 
     def on_mount(self) -> None:
         self.query_one("#cred", Input).focus()
@@ -790,6 +790,9 @@ class GitkitApp(App):
 
     def on_mount(self) -> None:
         self.title = "gitkit"
+        # the default Header icon is ⭘ (U+2B58) which renders as garbage in the
+        # CentOS 7 console font — use a plain ASCII brand instead.
+        self.query_one(Header).icon = "git"
         titles = {"untracked": "Untracked", "modified": "Modified", "staged": "Staged",
                   "tree": "Tree"}
         for wid, title in titles.items():
