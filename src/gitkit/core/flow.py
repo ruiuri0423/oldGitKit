@@ -169,17 +169,18 @@ class Flow:
     # ── staleness (behind / diverged guards) ─────────────────────
     def upstream_state(self, name: str) -> UpstreamState:
         """Classify a local branch against its upstream (read-only). Used to warn
-        before merge/push/pull when the branch is behind or has diverged."""
-        info = next((b for b in self.be.branches() if b.name == name), None)
-        if info is None or info.upstream is None or info.upstream_gone:
+        before merge/push/pull when the branch is behind or has diverged. Queries
+        just this one branch (branch_status) rather than every branch."""
+        upstream, ahead, behind, gone = self.be.branch_status(name)
+        if upstream is None or gone:
             return UpstreamState(name, None, 0, 0, "none")
-        if info.behind == 0:
-            kind = "ahead" if info.ahead > 0 else "current"
-        elif info.ahead == 0:
+        if behind == 0:
+            kind = "ahead" if ahead > 0 else "current"
+        elif ahead == 0:
             kind = "behind"
         else:
             kind = "diverged"
-        return UpstreamState(name, info.upstream, info.ahead, info.behind, kind)
+        return UpstreamState(name, upstream, ahead, behind, kind)
 
     def update_then_merge(self, target: str, remote: str) -> str:
         """Fast-forward `target` to its upstream first, then merge the current

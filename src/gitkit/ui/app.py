@@ -1116,13 +1116,14 @@ class GitkitApp(App):
             self._run_flow(self.flow.commit, message)
 
     def action_branches(self) -> None:
-        """Open the Branches popup (Local + Remote); Enter checks one out."""
+        """Open the Branches popup (Local + Remote); Enter checks one out.
+        (ahead/behind isn't shown here — it's the costly per-branch query; the
+        staleness guard surfaces it on the branch you actually push/pull/merge.)"""
         local = []
         for b in self._local_branches:
             mark = "● " if b.is_current else "  "
-            track = (" [gone]" if b.upstream_gone
-                     else f"  ↑{b.ahead}↓{b.behind}" if (b.ahead or b.behind) else "")
-            local.append((b.name, f"{mark}{b.name}{track}"))
+            up = f"  → {b.upstream}" if b.upstream else ""
+            local.append((b.name, f"{mark}{b.name}{up}"))
         remote = [(b.name, f"  {b.name}") for b in self._remote_branches]
         if not local and not remote:
             self._set_status("⚠ 沒有任何分支")

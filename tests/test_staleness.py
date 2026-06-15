@@ -7,13 +7,16 @@ from gitkit.core.models import BranchInfo
 
 
 class _StubBackend:
-    """Only `branches()` is exercised by Flow.upstream_state."""
+    """Only `branch_status()` is exercised by Flow.upstream_state."""
 
     def __init__(self, infos):
-        self._infos = infos
+        self._by_name = {b.name: b for b in infos}
 
-    def branches(self):
-        return self._infos
+    def branch_status(self, name):
+        b = self._by_name.get(name)
+        if b is None or b.upstream is None:
+            return (None, 0, 0, False)
+        return (b.upstream, b.ahead, b.behind, b.upstream_gone)
 
 
 def _flow(*infos):

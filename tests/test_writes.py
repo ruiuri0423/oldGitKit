@@ -100,9 +100,9 @@ class WriteCase(unittest.TestCase):
         self.be.create_branch("solo")
         b = next(x for x in self.be.branches() if x.name == "solo")
         self.assertIsNone(b.upstream)
-        self.assertEqual((b.ahead, b.behind, b.upstream_gone), (0, 0, False))
+        self.assertEqual(self.be.branch_status("solo"), (None, 0, 0, False))
 
-    def test_branches_ahead_behind_1_8_safe(self):
+    def test_branch_status_ahead_behind_1_8_safe(self):
         # the 1.8.3.1-safe path (@{upstream} + rev-list, no %(upstream:track)):
         # set an upstream, diverge, and check ahead/behind are reported.
         bare = tempfile.mkdtemp(prefix="gitkit_rem_")
@@ -121,11 +121,12 @@ class WriteCase(unittest.TestCase):
             _write(self.d, "l.txt", "local\n")
             _git(self.d, "add", "-A"); _git(self.d, "commit", "-q", "-m", "local work")
             _git(self.d, "fetch", "-q")                          # local advances by 1 → diverged
+            # branch_status (on demand) carries ahead/behind
+            self.assertEqual(self.be.branch_status("main"), ("origin/main", 1, 1, False))
+            # branches() stays cheap: name + upstream, no ahead/behind
             b = next(x for x in self.be.branches() if x.name == "main")
             self.assertEqual(b.upstream, "origin/main")
-            self.assertEqual(b.ahead, 1)
-            self.assertEqual(b.behind, 1)
-            self.assertFalse(b.upstream_gone)
+            self.assertEqual((b.ahead, b.behind), (0, 0))
         finally:
             shutil.rmtree(bare, ignore_errors=True)
             shutil.rmtree(clone, ignore_errors=True)

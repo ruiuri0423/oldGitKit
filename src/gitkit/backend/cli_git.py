@@ -128,34 +128,59 @@ class CliGitBackend(GitBackend):
         return parse_log_records(out)
 
     def branches(self) -> list[BranchInfo]:
-        # 1.8.3.1-safe: the %(upstream:short) (1.8.5+) and %(upstream:track) (2.5+)
-        # atoms don't exist in git 1.8.3.1, so we only ask for %(refname:short)
-        # here and resolve upstream + ahead/behind per branch with commands that
-        # DO exist in 1.8.3.1 (@{upstream}, rev-list --left-right --count).
+        # CHEAP / hot-path: just names + upstream (2 calls, independent of branch
+        # count). ahead/behind is the expensive bit (one rev-list per branch), so
+        # it is NOT computed here — call branch_status(name) on demand for that.
         out = self._text(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
         current = self.current_branch()
+        upstreams = self._upstream_map()
         result: list[BranchInfo] = []
         for name in out.splitlines():
             name = name.strip()
             if not name:
                 continue
-            upstream, ahead, behind, gone = self._upstream_of(name)
             result.append(
                 BranchInfo(
                     name=name,
-                    upstream=upstream,
-                    ahead=ahead,
-                    behind=behind,
+                    upstream=upstreams.get(name),
+                    ahead=0,
+                    behind=0,
                     is_current=(name == current),
-                    upstream_gone=gone,
+                    upstream_gone=False,
                 )
             )
         return result
 
-    def _upstream_of(self, name: str) -> tuple[str | None, int, int, bool]:
-        """(upstream, ahead, behind, gone) for one branch — 1.8.3.1-safe.
-        No upstream → (None, 0, 0, False); upstream configured but the ref is
-        missing → (name, 0, 0, True)."""
+    def _upstream_map(self) -> dict:
+        """{branch: 'origin/main'} from ONE `git config` call (1.8.3.1-safe),
+        instead of a `rev-parse @{upstream}` per branch."""
+        code, out, _ = self._run_full(["config", "--get-regexp", r"^branch\."])
+        if code != 0:
+            return {}
+        remotes: dict = {}
+        merges: dict = {}
+        for line in out.decode("utf-8", "replace").splitlines():
+            if " " not in line:
+                continue
+            key, val = line.split(" ", 1)
+            if key.startswith("branch.") and key.endswith(".remote"):
+                remotes[key[len("branch."):-len(".remote")]] = val.strip()
+            elif key.startswith("branch.") and key.endswith(".merge"):
+                merges[key[len("branch."):-len(".merge")]] = val.strip()
+        upstream: dict = {}
+        for name, merge in merges.items():
+            short = merge[len("refs/heads/"):] if merge.startswith("refs/heads/") else merge
+            remote = remotes.get(name)
+            if remote and remote != ".":
+                upstream[name] = f"{remote}/{short}"
+            elif remote == ".":
+                upstream[name] = short
+        return upstream
+
+    def branch_status(self, name: str) -> tuple:
+        """(upstream, ahead, behind, gone) for ONE branch — 1.8.3.1-safe, computed
+        on demand. No upstream → (None, 0, 0, False); upstream configured but its
+        ref is missing → (name, 0, 0, True)."""
         code, out, _ = self._run_full(
             ["rev-parse", "--abbrev-ref", f"{name}@{{upstream}}"])
         if code != 0:  # no upstream configured for this branch

@@ -67,7 +67,11 @@ class GitBackend(ABC):
     def log(self, *, limit: int = 200, skip: int = 0, all_refs: bool = True) -> list[Commit]: ...
 
     @abstractmethod
-    def branches(self) -> list[BranchInfo]: ...  # local, refs/heads/
+    def branches(self) -> list[BranchInfo]: ...  # local, refs/heads/ (cheap: no ahead/behind)
+
+    @abstractmethod
+    def branch_status(self, name: str) -> tuple:
+        ...  # (upstream, ahead, behind, gone) for ONE branch — the costly part, on demand
 
     @abstractmethod
     def remote_branches(self) -> list[RemoteBranch]: ...  # refs/remotes/
