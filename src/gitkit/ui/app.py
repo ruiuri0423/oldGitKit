@@ -462,6 +462,34 @@ class ProgressModal(ModalScreen):
         self.dismiss("cancel")
 
 
+class CredentialModal(ModalScreen):
+    """git asked for a username / password / passphrase — collect it in the TUI
+    and hand it back to git (secret fields are masked). Dismisses with the typed
+    value, or '' on Esc."""
+
+    BINDINGS = [("escape", "cancel", "cancel")]
+
+    def __init__(self, prompt: str, secret: bool):
+        super().__init__()
+        self._prompt = prompt
+        self._secret = secret
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modalbox"):
+            yield Label("🔐 " + (self._prompt or "git 需要認證資訊:"))
+            yield Input(password=self._secret, id="cred")
+            yield Label("[Enter] 送出    [Esc] 取消", classes="dim")
+
+    def on_mount(self) -> None:
+        self.query_one("#cred", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
+
+    def action_cancel(self) -> None:
+        self.dismiss("")
+
+
 class StalenessModal(ModalScreen):
     """Warns that a branch is behind / diverged from its upstream before a write
     op (merge / push / pull). Built dynamically: `actions` is a list of
@@ -737,6 +765,8 @@ class GitkitApp(App):
         self._flow_busy = False  # a write is running in a worker (guards re-entry)
         self._flow_worker = None  # the running write worker (Esc cancels → kills git)
         self._progress = None  # ProgressModal shown during a network op
+        self._askpass_srv = None  # local server that relays git auth prompts → TUI
+        self._askpass_token = None
         self._status_msg = "Ready"  # persistent status (Info 'loading…' overlays it)
         self._info_timer = None  # debounce timer for the Info panel
         self._info_worker = None  # in-flight Info fetch (cancelled when moving away)
@@ -768,6 +798,42 @@ class GitkitApp(App):
         self._reload_sync()  # first paint is synchronous for a deterministic start
         self.query_one("#tree", ListView).focus()
         self.set_interval(0.7, self._blink_head)  # flash the HEAD row
+        self.run_worker(self._start_askpass())  # git auth prompts → TUI popup
+
+    # ── git credential prompts → TUI (GIT_ASKPASS relay) ─────────
+    async def _start_askpass(self) -> None:
+        import secrets
+        self._askpass_token = secrets.token_hex(16)
+        try:
+            self._askpass_srv = await asyncio.start_server(
+                self._askpass_handler, "127.0.0.1", 0)
+            port = self._askpass_srv.sockets[0].getsockname()[1]
+            self.be.set_askpass(f"127.0.0.1:{port}", self._askpass_token)
+        except Exception:
+            self._askpass_srv = None  # fall back to GIT_TERMINAL_PROMPT=0 (fail fast)
+
+    async def _askpass_handler(self, reader, writer) -> None:
+        try:
+            token = (await reader.readline()).decode("utf-8", "replace").rstrip("\n")
+            prompt = (await reader.readline()).decode("utf-8", "replace").rstrip("\n")
+            if token != self._askpass_token:
+                return
+            answer = await self._ask_credential(prompt)
+            writer.write(((answer or "") + "\n").encode("utf-8"))
+            await writer.drain()
+        except Exception:
+            pass
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def _ask_credential(self, prompt: str) -> str:
+        low = prompt.lower()
+        secret = "password" in low or "passphrase" in low
+        result = await self.push_screen_wait(CredentialModal(prompt, secret))
+        return result or ""
 
     def _blink_head(self) -> None:
         item = self._head_item

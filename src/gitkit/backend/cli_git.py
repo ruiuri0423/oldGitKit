@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 from gitkit.backend.base import BackendError, GitBackend, MergeResult
 from gitkit.backend.capabilities import detect
@@ -57,6 +58,34 @@ class CliGitBackend(GitBackend):
         # content of a concrete commit (by 40-hex sha) never changes, so it is
         # safe to memoise forever — makes re-visiting commits while scrolling free
         self._commit_cache: dict = {}
+
+    def set_askpass(self, addr: str, token: str) -> None:
+        """Route git's credential/passphrase prompts to the TUI: point GIT_ASKPASS
+        (and SSH_ASKPASS) at a wrapper that relays the prompt to `addr` (guarded by
+        `token`). git then asks our popup instead of the terminal."""
+        wrapper = self._write_askpass_wrapper()
+        self._env["GIT_ASKPASS"] = wrapper
+        self._env["SSH_ASKPASS"] = wrapper
+        self._env["SSH_ASKPASS_REQUIRE"] = "force"  # OpenSSH 8.4+: use askpass w/o tty
+        self._env["GITKIT_ASKPASS_ADDR"] = addr
+        self._env["GITKIT_ASKPASS_TOKEN"] = token
+
+    @staticmethod
+    def _write_askpass_wrapper() -> str:
+        py = sys.executable
+        askpass_py = os.path.join(os.path.dirname(__file__), "..", "_askpass.py")
+        askpass_py = os.path.abspath(askpass_py)
+        d = tempfile.mkdtemp(prefix="gitkit_ap_")
+        if sys.platform == "win32":
+            path = os.path.join(d, "askpass.bat")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f'@"{py}" "{askpass_py}" %*\r\n')
+        else:
+            path = os.path.join(d, "askpass.sh")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f'#!/bin/sh\nexec "{py}" "{askpass_py}" "$@"\n')
+            os.chmod(path, 0o700)
+        return path
 
     def _commit_cached(self, key, sha: str, fn):
         """Memoise an immutable per-commit read. Bypassed for non-sha refs
