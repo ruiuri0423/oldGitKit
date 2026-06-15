@@ -182,7 +182,7 @@ class Flow:
             kind = "diverged"
         return UpstreamState(name, upstream, ahead, behind, kind)
 
-    def update_then_merge(self, target: str, remote: str) -> str:
+    async def update_then_merge(self, target: str, remote: str) -> str:
         """Fast-forward `target` to its upstream first, then merge the current
         branch into it — the clean path when the target was merely behind."""
         source = self.be.current_branch()
@@ -192,7 +192,7 @@ class Flow:
             raise FlowError("來源與目標相同")
         try:
             self.be.checkout(target)
-            self.be.pull_ff_only(remote)  # bring target up to its upstream
+            await self.be.pull_ff_only(remote)  # bring target up to its upstream
             r = self.be.merge(source)
         except BackendError as e:
             raise FlowError(translate(e.stderr))
@@ -203,13 +203,13 @@ class Flow:
             raise FlowError(f"合併衝突,請手動解決:{', '.join(r.conflicts[:5])}")
         raise FlowError(f"把 {source} 合併進 {target} 失敗")
 
-    def update_then_push(self, remote: str, branch: str) -> str:
+    async def update_then_push(self, remote: str, branch: str) -> str:
         """Fast-forward the current branch to its upstream, then push."""
         try:
-            self.be.pull_ff_only(remote)
+            await self.be.pull_ff_only(remote)
         except BackendError as e:
             raise FlowError(translate(e.stderr))
-        return self.push(remote, branch)
+        return await self.push(remote, branch)
 
     def integrate(self, remote: str) -> str:
         """Merge the current branch's upstream INTO it — the real-merge path for a
@@ -299,17 +299,20 @@ class Flow:
         verb = "revert" if op == "revert" else "合併"
         return f"已完成{verb} {c.short_sha}:{c.subject}"
 
-    # ── remote ───────────────────────────────────────────────────
-    def fetch(self, remote: str) -> str:
-        return self._do(lambda: self.be.fetch(remote),
-                        f"已 fetch {remote}(更新遠端追蹤分支)")
+    # ── remote (async + cancellable) ─────────────────────────────
+    async def fetch(self, remote: str) -> str:
+        try:
+            await self.be.fetch(remote)
+        except BackendError as e:
+            raise FlowError(translate(e.stderr))
+        return f"已 fetch {remote}(更新遠端追蹤分支)"
 
-    def pull(self, remote: str) -> str:
+    async def pull(self, remote: str) -> str:
         if self.be.current_branch() is None:
             raise FlowError("detached HEAD,無法 pull(請先切換到一個分支)")
         before = self.be.repo_state().head_sha
         try:
-            self.be.pull_ff_only(remote)
+            await self.be.pull_ff_only(remote)
         except BackendError as e:
             raise FlowError(translate(e.stderr))
         after = self.be.repo_state().head_sha
@@ -320,10 +323,13 @@ class Flow:
     def push_preview(self) -> int:
         return self.be.push_preview()
 
-    def push(self, remote: str, branch: str) -> str:
+    async def push(self, remote: str, branch: str) -> str:
         try:
             n = self.be.push_preview()
         except BackendError:
             n = 0
-        return self._do(lambda: self.be.push(remote, branch),
-                        f"已 push {n} 筆到 {remote}/{branch}")
+        try:
+            await self.be.push(remote, branch)
+        except BackendError as e:
+            raise FlowError(translate(e.stderr))
+        return f"已 push {n} 筆到 {remote}/{branch}"

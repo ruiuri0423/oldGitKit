@@ -711,6 +711,8 @@ class GitkitApp(App):
         self._head_item = None
         self._cmdhistory = []  # (cmd_str, result, is_error) of recent write actions
         self._flow_busy = False  # a write is running in a worker (guards re-entry)
+        self._flow_worker = None  # the running write worker (Esc cancels → kills git)
+        self._status_msg = "Ready"  # persistent status (Info 'loading…' overlays it)
         self._info_timer = None  # debounce timer for the Info panel
         self._info_worker = None  # in-flight Info fetch (cancelled when moving away)
 
@@ -749,6 +751,11 @@ class GitkitApp(App):
 
     # ── status bar ───────────────────────────────────────────────
     def _set_status(self, msg: str) -> None:
+        """Set the persistent status (action results, Ready, 執行中…)."""
+        self._status_msg = msg
+        self._render_status(msg)
+
+    def _render_status(self, msg: str) -> None:
         # build with Text so the [Tab] / [Enter] brackets aren't eaten as markup
         t = Text()
         t.append(msg, style="bold")
@@ -913,9 +920,21 @@ class GitkitApp(App):
         header()
         self._fill_difflist([])          # drop the previous row's file list
         self._info_msg("載入中…")
-        self._set_status("loading…")
+        self._info_loading()
         self._cancel_info()
         self._info_timer = self.set_timer(INFO_DEBOUNCE, lambda: self._fire_info(fetch))
+
+    def _info_loading(self) -> None:
+        # show 'loading…' as a TRANSIENT overlay — it doesn't overwrite the
+        # persistent status (a write result / 執行中… / Ready), and never clobbers
+        # an in-progress write's line.
+        if not self._flow_busy:
+            self._render_status("loading…")
+
+    def _info_idle(self) -> None:
+        # fetch done → restore whatever the persistent status was
+        if not self._flow_busy:
+            self._render_status(self._status_msg)
 
     def _fire_info(self, fetch) -> None:
         self._info_worker = self.run_worker(
@@ -924,12 +943,12 @@ class GitkitApp(App):
     async def _info_guard(self, fetch) -> None:
         try:
             await fetch()
-            self._set_status("Ready")
+            self._info_idle()
         except asyncio.CancelledError:
             raise  # superseded by a newer row — that fetch owns the status now
         except BackendError as e:
             self._info_msg(f"git error: {e}\n{getattr(e, 'stderr', '')}")
-            self._set_status("Ready")
+            self._info_idle()
 
     def _info_commit(self, c) -> None:
         glyph = "◆" if c.is_merge else "●"
@@ -959,7 +978,7 @@ class GitkitApp(App):
             self._set_ctx(f"{kind}: {path}")
             self._fill_difflist([])
             self._info_msg(f"(untracked) {path}\n\n新檔案,尚未進入 index。")
-            self._set_status("Ready")
+            self._info_idle()
             return
 
         async def fetch():
@@ -977,6 +996,10 @@ class GitkitApp(App):
             self._info_worker = None
 
     def action_diff_back(self) -> None:
+        # while a cancellable network write runs, Esc aborts it (kills the git proc)
+        if self._flow_busy and self._flow_worker is not None:
+            self._flow_worker.cancel()
+            return
         self.query_one("#tree", ListView).focus()
 
     # ── events ───────────────────────────────────────────────────
@@ -1099,23 +1122,32 @@ class GitkitApp(App):
 
     # ── write actions (F3) — all go through self.flow ────────────
     def _run_flow(self, fn, *args) -> None:
-        """Run a Flow write off the event loop so slow ops (push/pull/merge over
-        a slow remote) don't freeze the UI. A busy-guard rejects a second write
-        while one is running (writes are user-gated, so this is rare)."""
+        """Run a Flow write off the event loop. Async Flow methods (the network
+        ops fetch/pull/push) are awaited directly so they can be CANCELLED mid-run
+        (Esc) — which kills the git process; the sync local writes run in a thread.
+        A busy-guard rejects a second write while one is running."""
         if self._flow_busy:
             self._set_status("⚠ 上一個操作還在進行,請稍候")
             return
         self._flow_busy = True
-        self._set_status("執行中…")
-        self.run_worker(self._run_flow_async(fn, args), group="flow")
+        cancellable = asyncio.iscoroutinefunction(fn)
+        self._set_status("執行中…(Esc 取消)" if cancellable else "執行中…")
+        self._flow_worker = self.run_worker(self._run_flow_async(fn, args), group="flow")
 
     async def _run_flow_async(self, fn, args) -> None:
         self.be.cmdlog.clear()
         try:
-            msg = await asyncio.to_thread(fn, *args)
+            if asyncio.iscoroutinefunction(fn):
+                msg = await fn(*args)                      # network op — cancellable
+            else:
+                msg = await asyncio.to_thread(fn, *args)   # local write — threaded
             err = None
         except FlowError as e:
             msg, err = None, str(e)
+        except asyncio.CancelledError:
+            self._set_status("已中止操作(git 已停止)")
+            self._begin_reload()
+            raise
         finally:
             self._flow_busy = False
         # WRITE_SUBCMDS filter isolates this write's commands even if a background

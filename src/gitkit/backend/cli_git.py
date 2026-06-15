@@ -99,10 +99,12 @@ class CliGitBackend(GitBackend):
                               stderr=subprocess.PIPE, env=self._env)
         return proc.returncode, proc.stdout, proc.stderr.decode("utf-8", "replace")
 
-    async def _text_async(self, args: list[str], *, check: bool = True) -> str:
-        """Run a read off the event loop and — crucially — KILL the git process if
-        the awaiting task is cancelled (the user moved off the row). This is the
-        real front↔back interrupt: no lingering git process, no wasted work."""
+    async def _run_async(self, args: list[str], *, check: bool = True) -> bytes:
+        """Run a git command off the event loop and — crucially — KILL the git
+        process if the awaiting task is cancelled. This is the real front↔back
+        interrupt used by the cancellable Info reads AND the network writes
+        (fetch/pull/push), so a slow op can be aborted mid-flight with no
+        lingering git process."""
         self.cmdlog.append(list(args))
         argv = self._argv(args)
         proc = await asyncio.create_subprocess_exec(
@@ -122,7 +124,10 @@ class CliGitBackend(GitBackend):
             raise BackendError(
                 f"git {' '.join(args)} failed ({proc.returncode})",
                 argv=argv, stderr=err.decode("utf-8", "replace").strip())
-        return out.decode("utf-8", "surrogateescape")
+        return out
+
+    async def _text_async(self, args: list[str], *, check: bool = True) -> str:
+        return (await self._run_async(args, check=check)).decode("utf-8", "surrogateescape")
 
     # ── capabilities / repo basics ───────────────────────────────
     def capabilities(self) -> Capabilities:
@@ -465,19 +470,19 @@ class CliGitBackend(GitBackend):
         self._run(["commit", "--no-edit"])  # completes a merge OR revert (MERGE_MSG)
         return self.log(limit=1, all_refs=False)[0]
 
-    # ── remote ───────────────────────────────────────────────────
-    def fetch(self, remote: str) -> None:
-        self._run(["fetch", remote])
+    # ── remote (async + cancellable: these are the slow / network ops) ──
+    async def fetch(self, remote: str) -> None:
+        await self._run_async(["fetch", remote])
 
-    def pull_ff_only(self, remote: str) -> None:
-        self._run(["pull", "--ff-only", remote])
+    async def pull_ff_only(self, remote: str) -> None:
+        await self._run_async(["pull", "--ff-only", remote])
 
     def push_preview(self) -> int:
         code, out, _ = self._run_full(["rev-list", "--count", "@{u}..HEAD"])
         return int(out.decode().strip()) if code == 0 and out.strip() else 0
 
-    def push(self, remote: str, branch: str) -> None:
-        self._run(["push", remote, branch])
+    async def push(self, remote: str, branch: str) -> None:
+        await self._run_async(["push", remote, branch])
 
     # ── export / stash ───────────────────────────────────────────
     def archive(self, dest_dir: str, ref: str = "HEAD") -> None:
