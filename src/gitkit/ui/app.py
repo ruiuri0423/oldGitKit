@@ -706,6 +706,7 @@ class GitkitApp(App):
         self._remote_branches = []
         self._head_item = None
         self._cmdhistory = []  # (cmd_str, result, is_error) of recent write actions
+        self._flow_busy = False  # a write is running in a worker (guards re-entry)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -898,13 +899,20 @@ class GitkitApp(App):
     def _info_commit(self, c) -> None:
         glyph = "◆" if c.is_merge else "●"
         refs = f"  ({', '.join(c.refs)})" if c.refs else ""
-        self._set_ctx(f"{glyph} {c.short_sha}  {c.subject}{refs}")
+        self._set_ctx(f"{glyph} {c.short_sha}  {c.subject}{refs}")  # header is instant
+        # the two git reads run off the event loop; `exclusive` cancels a stale
+        # fetch when the user keeps scrolling, so fast scrolling never lags.
+        self.run_worker(self._info_commit_async(c), exclusive=True, group="info")
+
+    async def _info_commit_async(self, c) -> None:
         try:
-            self._fill_difflist([self._file_row(f, c.sha, False)
-                                 for f in self.be.commit_files(c.sha)])
-            self._info_msg(self.be.commit_message(c.sha))
+            files = await asyncio.to_thread(self.be.commit_files, c.sha)
+            msg = await asyncio.to_thread(self.be.commit_message, c.sha)
         except BackendError as e:
             self._info_msg(f"git error: {e}\n{e.stderr}")
+            return
+        self._fill_difflist([self._file_row(f, c.sha, False) for f in files])
+        self._info_msg(msg)
 
     def _info_staged(self) -> None:
         self._set_ctx("◌ staged changes — press c to commit")
@@ -1049,19 +1057,34 @@ class GitkitApp(App):
 
     # ── write actions (F3) — all go through self.flow ────────────
     def _run_flow(self, fn, *args) -> None:
-        """Call a Flow method; refresh + show the result, or the error.
-        The actual git command(s) that ran are flashed in the header."""
+        """Run a Flow write off the event loop so slow ops (push/pull/merge over
+        a slow remote) don't freeze the UI. A busy-guard rejects a second write
+        while one is running (writes are user-gated, so this is rare)."""
+        if self._flow_busy:
+            self._set_status("⚠ 上一個操作還在進行,請稍候")
+            return
+        self._flow_busy = True
+        self._set_status("執行中…")
+        self.run_worker(self._run_flow_async(fn, args), group="flow")
+
+    async def _run_flow_async(self, fn, args) -> None:
         self.be.cmdlog.clear()
         try:
-            msg = fn(*args)
+            msg = await asyncio.to_thread(fn, *args)
+            err = None
         except FlowError as e:
-            cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
-            self._record(cmds, str(e), True)
-            self._flash_command(cmds)
-            self._set_status(f"⚠ {e}")
-            self._open_conflict_resolver()  # a merge that conflicted → guide screen
-            return
+            msg, err = None, str(e)
+        finally:
+            self._flow_busy = False
+        # WRITE_SUBCMDS filter isolates this write's commands even if a background
+        # reload appended reads to the shared cmdlog meanwhile.
         cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
+        if err is not None:
+            self._record(cmds, err, True)
+            self._flash_command(cmds)
+            self._set_status(f"⚠ {err}")
+            self._open_conflict_resolver()  # a merge/revert that conflicted → guide
+            return
         self._record(cmds, msg, False)
         self._begin_reload()  # background refresh; status below stays put
         self._flash_command(cmds)
