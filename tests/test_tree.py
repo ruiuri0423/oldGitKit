@@ -107,6 +107,26 @@ class TreePaginationCase(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(app._exception)
             self.assertEqual(self._commit_rows(app), 25)
 
+    async def test_reload_keeps_cursor(self):
+        # a reload whose commit set is unchanged (e.g. a checkout that only moves
+        # HEAD) must refresh rows in place and NOT snap the cursor back to the top
+        app = GitkitApp(self.d)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(app, pilot)
+            tree = app.query_one("#tree", ListView)
+            tree.focus()
+            await self._wait_rows(app, pilot, 10)
+            tree.index = 5
+            await pilot.pause(0.05)
+            sha = getattr(tree.highlighted_child, "sha", None)
+            self.assertIsNotNone(sha)
+            await pilot.press("r")                      # reload
+            await _settle(app, pilot)
+            for _ in range(20):
+                await pilot.pause(0.03)
+            self.assertEqual(tree.index, 5)             # cursor kept its place
+            self.assertEqual(getattr(tree.highlighted_child, "sha", None), sha)
+
 
 if __name__ == "__main__":
     unittest.main()

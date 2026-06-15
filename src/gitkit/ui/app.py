@@ -148,9 +148,21 @@ class CommitItem(ListItem):
     """A Tree row that remembers which commit it stands for."""
 
     def __init__(self, commit, renderable: Text):
-        super().__init__(Static(renderable))
+        self._static = Static(renderable)
+        super().__init__(self._static)
         self.commit = commit
         self.sha = commit.sha
+        self.renderable = renderable  # kept so a reload can refresh in place
+
+    def refresh_from(self, other: "CommitItem") -> None:
+        """Update this row's commit + rendered text in place (no remove/add), so a
+        reload that only moves decorations (e.g. HEAD after checkout) doesn't reset
+        the cursor. Safe because lanes are column-stable: the row's position and
+        graph don't change, only its text."""
+        self.commit = other.commit
+        self.sha = other.sha
+        self.renderable = other.renderable
+        self._static.update(other.renderable)
 
 
 class VirtualItem(ListItem):
@@ -985,11 +997,45 @@ class GitkitApp(App):
         self._staged_count = len(staged)
         self._tree_has_more = len(commits) >= self._tree_limit
         items, width = self._build_tree_items(commits, len(staged))
+        self._apply_tree_items(items, width)
+
+    def _apply_tree_items(self, items, width) -> None:
+        """Put the rendered Tree rows on screen. When the row *structure* is
+        unchanged (same commits/order, same width, same staged-row) — e.g. a
+        checkout that only moves the HEAD label — refresh the existing rows IN
+        PLACE so the cursor doesn't jump back to the top and there's no flicker.
+        Otherwise (commits added/removed) do a full rebuild, but keep the cursor
+        on the same commit by sha rather than snapping to the top."""
+        tree = self.query_one("#tree", ListView)
+        existing = list(tree.children)
+        same = (width == self._tree_width
+                and len(existing) == len(items)
+                and all(getattr(o, "sha", None) == getattr(n, "sha", None)
+                        for o, n in zip(existing, items)))
         self._tree_width = width
+        if same and existing:
+            for old, new in zip(existing, items):
+                if isinstance(old, CommitItem) and isinstance(new, CommitItem):
+                    old.refresh_from(new)
+            self._head_item = next(
+                (o for o in existing
+                 if isinstance(o, CommitItem) and "HEAD" in o.commit.refs), None)
+            return
+        # structure changed → full rebuild, but preserve the cursor's commit
+        prev = tree.highlighted_child
+        prev_sha = getattr(prev, "sha", None)
+        prev_virtual = isinstance(prev, VirtualItem)
+        sel = None
+        if prev_sha is not None:
+            sel = next((i for i, it in enumerate(items)
+                        if getattr(it, "sha", None) == prev_sha), None)
+        elif prev_virtual:
+            sel = next((i for i, it in enumerate(items)
+                        if isinstance(it, VirtualItem)), None)
         self._head_item = next(
             (it for it in items
              if isinstance(it, CommitItem) and "HEAD" in it.commit.refs), None)
-        self._repopulate(self.query_one("#tree", ListView), items, select_first=True)
+        self._repopulate(tree, items, select_first=(sel is None), select_index=sel)
 
     def _build_tree_items(self, commits, staged_count: int):
         """Render the lane graph for `commits` into Tree rows. Returns
@@ -1054,19 +1100,24 @@ class GitkitApp(App):
         if tree.children:
             tree.index = min(index, len(tree.children) - 1)
 
-    def _repopulate(self, listview: ListView, items, *, select_first=False) -> None:
+    def _repopulate(self, listview: ListView, items, *, select_first=False,
+                    select_index=None) -> None:
         """Rebuild a ListView, awaiting clear() before appending. ListView.clear()
         defers child removal (returns AwaitRemove), so appending synchronously
         stacks the new rows on top of the not-yet-removed old ones — which a real
         terminal paints as stale, un-moving rows (e.g. a 'main' label that won't
         advance after a fast-forward merge) until the app is reopened. Awaiting the
         removal in a per-panel worker keeps the rebuild clean; `exclusive` cancels
-        an in-flight rebuild of the same panel without touching the others."""
+        an in-flight rebuild of the same panel without touching the others.
+        `select_index` restores a specific row after the rebuild (cursor keeps its
+        place); otherwise `select_first` lands on the top row."""
         async def rebuild():
             await listview.clear()
             for it in items:
                 listview.append(it)
-            if select_first and items:
+            if select_index is not None and 0 <= select_index < len(items):
+                listview.index = select_index
+            elif select_first and items:
                 listview.index = 0
 
         self.run_worker(rebuild(), group=f"refill-{listview.id}",
@@ -1526,18 +1577,39 @@ class GitkitApp(App):
             self._run_flow(self.flow.commit, message)
 
     def action_branches(self) -> None:
-        """Open the Branches popup (Local + Remote); Enter checks one out.
-        (ahead/behind isn't shown here — it's the costly per-branch query; the
-        staleness guard surfaces it on the branch you actually push/pull/merge.)"""
-        local = []
-        for b in self._local_branches:
-            mark = "● " if b.is_current else "  "
-            up = f"  → {b.upstream}" if b.upstream else ""
-            local.append((b.name, f"{mark}{b.name}{up}"))
-        remote = [(b.name, f"  {b.name}") for b in self._remote_branches]
-        if not local and not remote:
+        """Open the Branches popup (Local + Remote); Enter checks one out. Each
+        local branch shows ahead/behind vs its upstream — that's one rev-list per
+        branch, so it's computed off the event loop before the popup is shown."""
+        if not self._local_branches and not self._remote_branches:
             self._set_status("⚠ 沒有任何分支")
             return
+        self.run_worker(self._open_branches(), exclusive=True, group="branches")
+
+    async def _open_branches(self) -> None:
+        locals_ = self._local_branches
+        # ahead/behind = one rev-list per upstream-tracking branch → to_thread
+        statuses = await asyncio.to_thread(
+            lambda: {b.name: self.be.branch_status(b.name)
+                     for b in locals_ if b.upstream})
+        local = []
+        for b in locals_:
+            mark = "● " if b.is_current else "  "
+            label = f"{mark}{b.name}"
+            if b.upstream:
+                _up, ahead, behind, gone = statuses.get(
+                    b.name, (b.upstream, 0, 0, False))
+                if gone:
+                    label += f"  → {b.upstream} (gone)"
+                else:
+                    ab = []
+                    if ahead:
+                        ab.append(f"↑{ahead}")
+                    if behind:
+                        ab.append(f"↓{behind}")
+                    tag = " ".join(ab) if ab else "✓"
+                    label += f"  {tag}  → {b.upstream}"
+            local.append((b.name, label))
+        remote = [(b.name, f"  {b.name}") for b in self._remote_branches]
         self.push_screen(BranchesModal(local, remote), self._after_branch_pick)
 
     def _after_branch_pick(self, choice) -> None:
