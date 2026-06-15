@@ -86,6 +86,40 @@ class WriteCase(unittest.TestCase):
         self.assertTrue(r.fast_forward)
         self.assertEqual(self.be.current_branch(), "main")
 
+    def test_branch_without_upstream(self):
+        self.be.create_branch("solo")
+        b = next(x for x in self.be.branches() if x.name == "solo")
+        self.assertIsNone(b.upstream)
+        self.assertEqual((b.ahead, b.behind, b.upstream_gone), (0, 0, False))
+
+    def test_branches_ahead_behind_1_8_safe(self):
+        # the 1.8.3.1-safe path (@{upstream} + rev-list, no %(upstream:track)):
+        # set an upstream, diverge, and check ahead/behind are reported.
+        bare = tempfile.mkdtemp(prefix="gitkit_rem_")
+        clone = tempfile.mkdtemp(prefix="gitkit_cl_")
+        try:
+            subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                            "--bare", bare], check=True)
+            _git(self.d, "remote", "add", "origin", bare)
+            _git(self.d, "push", "-q", "-u", "origin", "main")  # main → origin/main
+            subprocess.run(["git", "clone", "-q", bare, clone], check=True)
+            _git(clone, "config", "user.email", "x@x")
+            _git(clone, "config", "user.name", "x")
+            _write(clone, "r.txt", "remote\n")
+            _git(clone, "add", "-A"); _git(clone, "commit", "-q", "-m", "remote work")
+            _git(clone, "push", "-q", "origin", "main")          # remote advances by 1
+            _write(self.d, "l.txt", "local\n")
+            _git(self.d, "add", "-A"); _git(self.d, "commit", "-q", "-m", "local work")
+            _git(self.d, "fetch", "-q")                          # local advances by 1 → diverged
+            b = next(x for x in self.be.branches() if x.name == "main")
+            self.assertEqual(b.upstream, "origin/main")
+            self.assertEqual(b.ahead, 1)
+            self.assertEqual(b.behind, 1)
+            self.assertFalse(b.upstream_gone)
+        finally:
+            shutil.rmtree(bare, ignore_errors=True)
+            shutil.rmtree(clone, ignore_errors=True)
+
     def _make_conflict(self):
         """Leave the repo mid-merge with a.txt conflicted (on main, merging 'other')."""
         self.be.create_branch("other")

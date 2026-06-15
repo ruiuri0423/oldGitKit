@@ -175,35 +175,33 @@ git --no-pager -c color.ui=false <子指令> …
 
 ## 5. 撈 upstream 與 ahead/behind(右欄 Remote/Local 面板)
 
-### 主力(一行撈齊)
+> ⚠️ **地雷**:`%(upstream:short)` 是 **1.8.5+**、`%(upstream:track)` 是 **2.5+**,
+> 在 **git 1.8.3.1 不存在**——用了會讓 `for-each-ref` 報 `unknown field name`,整個分支面板掛掉。
+> (注意:這個錯誤跟 shell 無關;gitkit 全程 `subprocess` 用 list 引數、`shell=False`,
+> git 不經過任何 shell。若在 csh 提示字元手貼 `%(...)` 看到 `Badly placed ()'s` 是 csh 自己的事。)
+
+### 主力(1.8.3.1-safe:名稱用 for-each-ref,upstream/ahead-behind 逐分支算)
+
+只向 `for-each-ref` 要 `%(refname:short)`(1.7 就有),其餘用 1.8.3.1 一定有的指令補:
 
 ```
-git for-each-ref \
-  --format='%(refname:short)%09%(upstream:short)%09%(upstream:track)' \
-  refs/heads/
+# 1) 列分支名
+git for-each-ref --format='%(refname:short)' refs/heads/
+
+# 2) 每個分支:解析它的 upstream(沒設會 exit≠0)
+git rev-parse --abbrev-ref <branch>@{upstream}        # → origin/main
+
+# 3) 每個有 upstream 的分支:算 ahead/behind
+git rev-list --left-right --count <branch>@{upstream}...<branch>
+#   輸出 "<left>\t<right>" = "<behind>\t<ahead>"
+#   (左 = upstream 才有 = 落後;右 = branch 才有 = 領先)
+#   步驟 2 成功但步驟 3 失敗 → upstream 被刪([gone])
 ```
 
-輸出(tab 分隔):
-
-```
-main      origin/main
-feature   origin/feature   [ahead 2]
-exp       origin/exp       [ahead 1, behind 3]
-old       origin/old       [gone]
-```
-
-- `%(upstream:track)` → `[ahead N, behind M]` / `[ahead N]` / `[behind M]` / `[gone]`(upstream 被刪)/ 空(同步)
-- `%(upstream:short)` / `%(upstream:track)` 自 1.7 起可用,1.8 穩用
-- **數字反映上次 `fetch` 的已知狀態,要先 fetch 才準**
-
-### 備援(逐分支明確計算)
-
-```
-git rev-list --left-right --count <branch>...<branch>@{u}
-```
-
-- 輸出 `<ahead>\t<behind>`(左 = branch 領先、右 = upstream 領先)
-- 用於 `track` 解析不穩或要精確值時
+- `@{upstream}`(1.7.0)、`--abbrev-ref`(1.7.6)、`rev-list --left-right --count`(1.7.2)皆早於 1.8.3.1。
+- 代價:每個分支多 1~2 次 git 呼叫(分支通常不多,TUI reload 可接受)。
+- **數字反映上次 `fetch` 的已知狀態,要先 fetch 才準**。
+- 實作見 `CliGitBackend.branches()` / `_upstream_of()`。
 
 ---
 
@@ -220,6 +218,8 @@ git rev-list --left-right --count <branch>...<branch>@{u}
 | `status --porcelain=v2` | 2.11 | `--porcelain`(v1) |
 | `stash push` | 2.13 | `stash save` |
 | `%(objectname:short)` | 2.11 | `%(objectname)` 自截 / `rev-parse --short` |
+| `%(upstream:short)` | 1.8.5 | `rev-parse --abbrev-ref <b>@{upstream}` |
+| `%(upstream:track)` | 2.5 | `rev-list --left-right --count <b>@{upstream}...<b>` |
 | `log --format=%D` | 2.13 | `%d`(自帶 ` (...)`,需自剝) |
 | `show --no-patch` | 1.8.4 | `show -s` |
 | `--ahead-behind` | 2.x | `rev-list --left-right --count` |
@@ -237,4 +237,4 @@ git rev-list --left-right --count <branch>...<branch>@{u}
 
 ---
 
-_最後更新:2026-06-12 — 對應 P0 後端規劃_
+_最後更新:2026-06-15 — §5 改為 1.8.3.1-safe(移除 `%(upstream:short/track)`)_

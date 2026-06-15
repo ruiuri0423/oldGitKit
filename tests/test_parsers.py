@@ -10,7 +10,6 @@ from gitkit.backend.cli_git import (
     _FS,
     _RS,
     _parse_decoration,
-    _parse_track,
     parse_log_records,
     parse_numstat_z,
     parse_remote_branch_lines,
@@ -68,23 +67,6 @@ class TestDecoration(unittest.TestCase):
 
     def test_tag_kept(self):
         self.assertEqual(_parse_decoration(" (tag: v1.0)"), ["tag: v1.0"])
-
-
-class TestTrack(unittest.TestCase):
-    def test_both(self):
-        self.assertEqual(_parse_track("[ahead 1, behind 3]"), (1, 3, False))
-
-    def test_ahead_only(self):
-        self.assertEqual(_parse_track("[ahead 2]"), (2, 0, False))
-
-    def test_behind_only(self):
-        self.assertEqual(_parse_track("[behind 5]"), (0, 5, False))
-
-    def test_gone(self):
-        self.assertEqual(_parse_track("[gone]"), (0, 0, True))
-
-    def test_up_to_date(self):
-        self.assertEqual(_parse_track(""), (0, 0, False))
 
 
 class TestLogRecords(unittest.TestCase):

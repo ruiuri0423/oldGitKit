@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import io
 import os
-import re
 import subprocess
 import tarfile
 
@@ -32,8 +31,6 @@ from gitkit.core.models import (
 _FS = "\x1f"  # unit separator between fields
 _RS = "\x1e"  # record separator between commits
 _LOG_FORMAT = _FS.join(["%H", "%P", "%d", "%an", "%ad", "%s"]) + _RS
-
-_TRACK_RE = re.compile(r"ahead (\d+)|behind (\d+)")
 
 
 class CliGitBackend(GitBackend):
@@ -131,20 +128,18 @@ class CliGitBackend(GitBackend):
         return parse_log_records(out)
 
     def branches(self) -> list[BranchInfo]:
-        # Branch names/upstreams can't contain whitespace, so a literal TAB is
-        # a safe field separator; upstream:track (last field) may contain spaces.
-        fmt = "%(refname:short)\t%(upstream:short)\t%(upstream:track)"
-        out = self._text(["for-each-ref", f"--format={fmt}", "refs/heads/"])
+        # 1.8.3.1-safe: the %(upstream:short) (1.8.5+) and %(upstream:track) (2.5+)
+        # atoms don't exist in git 1.8.3.1, so we only ask for %(refname:short)
+        # here and resolve upstream + ahead/behind per branch with commands that
+        # DO exist in 1.8.3.1 (@{upstream}, rev-list --left-right --count).
+        out = self._text(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])
         current = self.current_branch()
         result: list[BranchInfo] = []
-        for line in out.splitlines():
-            if not line:
+        for name in out.splitlines():
+            name = name.strip()
+            if not name:
                 continue
-            parts = line.split("\t")
-            name = parts[0]
-            upstream = parts[1] if len(parts) > 1 and parts[1] else None
-            track = parts[2] if len(parts) > 2 else ""
-            ahead, behind, gone = _parse_track(track)
+            upstream, ahead, behind, gone = self._upstream_of(name)
             result.append(
                 BranchInfo(
                     name=name,
@@ -156,6 +151,25 @@ class CliGitBackend(GitBackend):
                 )
             )
         return result
+
+    def _upstream_of(self, name: str) -> tuple[str | None, int, int, bool]:
+        """(upstream, ahead, behind, gone) for one branch — 1.8.3.1-safe.
+        No upstream → (None, 0, 0, False); upstream configured but the ref is
+        missing → (name, 0, 0, True)."""
+        code, out, _ = self._run_full(
+            ["rev-parse", "--abbrev-ref", f"{name}@{{upstream}}"])
+        if code != 0:  # no upstream configured for this branch
+            return None, 0, 0, False
+        upstream = out.decode("utf-8", "replace").strip()
+        code, out, _ = self._run_full(
+            ["rev-list", "--left-right", "--count", f"{name}@{{upstream}}...{name}"])
+        if code != 0:  # upstream configured but its ref is gone
+            return upstream, 0, 0, True
+        nums = out.decode("utf-8", "replace").split()
+        if len(nums) >= 2:
+            behind, ahead = int(nums[0]), int(nums[1])  # left=upstream-only, right=branch-only
+            return upstream, ahead, behind, False
+        return upstream, 0, 0, False
 
     def remote_reachable(self) -> set:
         # every commit reachable from any remote-tracking ref (refs/remotes/*)
@@ -475,15 +489,3 @@ def _parse_decoration(deco: str) -> list[str]:
     return refs
 
 
-def _parse_track(track: str) -> tuple[int, int, bool]:
-    """'[ahead 1, behind 3]' -> (1, 3, False); '[gone]' -> (0, 0, True)."""
-    track = track.strip()
-    if track == "[gone]":
-        return (0, 0, True)
-    ahead = behind = 0
-    for m in _TRACK_RE.finditer(track):
-        if m.group(1):
-            ahead = int(m.group(1))
-        elif m.group(2):
-            behind = int(m.group(2))
-    return (ahead, behind, False)
