@@ -47,6 +47,20 @@ def _fmt_cmd(args) -> str:
         parts.append(f'"{a}"' if (" " in a or a == "") else a)
     return " ".join(parts)
 
+
+class _Cmd:
+    """A queued git operation + how to present it. A single consumer runs these
+    serially, so e.g. rapid stage/unstage just pile up and process in order.
+      modal=True       → blocking ProgressModal (can't background)
+      cancellable=True → Esc aborts (kills the git tree); only the network ops
+    """
+    def __init__(self, coro, label, *, modal, cancellable, after=None):
+        self.coro = coro          # () -> awaitable[str]; returns the status msg
+        self.label = label
+        self.modal = modal
+        self.cancellable = cancellable
+        self.after = after        # optional callable(msg) after success
+
 HELP_TEXT = """[b]gitkit — keys[/b]
 
   [b]navigate[/b]
@@ -439,27 +453,32 @@ class ConfirmModal(ModalScreen):
 
 
 class ProgressModal(ModalScreen):
-    """Shown while a network op (fetch / pull / push) runs. The app dismisses it
-    when the backend op finishes; Esc dismisses with 'cancel' so the caller can
-    abort the op (which kills the whole git process tree)."""
+    """Shown while an operation runs (blocking). The app dismisses it when the op
+    finishes. If `cancellable` (network ops), Esc dismisses with 'cancel' so the
+    caller can abort (which kills the git process tree); otherwise (tree-modifying
+    local ops) it just shows '執行中' and swallows keys."""
 
-    BINDINGS = [("escape", "cancel", "cancel")]
-
-    def __init__(self, message: str):
+    def __init__(self, message: str, cancellable: bool = True):
         super().__init__()
         self._message = message
+        self._cancellable = cancellable
 
     def compose(self) -> ComposeResult:
         body = Text()
         body.append("⟳ ", style="bold yellow")
         body.append(self._message + "\n\n", style="bold")
-        body.append("執行中,請稍候…    ", style="dim")
-        body.append(" Esc ", style="bold black on grey70")
-        body.append(" 取消", style="dim")
+        body.append("執行中,請稍候…", style="dim")
+        if self._cancellable:
+            body.append("    ")
+            body.append(" Esc ", style="bold black on grey70")
+            body.append(" 取消", style="dim")
         yield Static(body, id="modalbox")
 
-    def action_cancel(self) -> None:
-        self.dismiss("cancel")
+    def on_key(self, event: events.Key) -> None:
+        event.stop()
+        event.prevent_default()  # a blocking modal swallows everything
+        if self._cancellable and event.key == "escape":
+            self.dismiss("cancel")
 
 
 class CredentialModal(ModalScreen):
@@ -762,9 +781,9 @@ class GitkitApp(App):
         self._remote_branches = []
         self._head_item = None
         self._cmdhistory = []  # (cmd_str, result, is_error) of recent write actions
-        self._flow_busy = False  # a write is running in a worker (guards re-entry)
-        self._flow_worker = None  # the running write worker (Esc cancels → kills git)
-        self._progress = None  # ProgressModal shown during a network op
+        self._cmd_queue = None  # asyncio.Queue of _Cmd (created in on_mount)
+        self._cmd_task = None  # the currently-running command's task (Esc cancels)
+        self._progress = None  # ProgressModal shown during a modal op
         self._askpass_srv = None  # local server that relays git auth prompts → TUI
         self._askpass_token = None
         self._status_msg = "Ready"  # persistent status (Info 'loading…' overlays it)
@@ -801,6 +820,8 @@ class GitkitApp(App):
         self._reload_sync()  # first paint is synchronous for a deterministic start
         self.query_one("#tree", ListView).focus()
         self.set_interval(0.7, self._blink_head)  # flash the HEAD row
+        self._cmd_queue = asyncio.Queue()        # serial git-command queue
+        self.run_worker(self._cmd_consumer())    # the single consumer
         self.run_worker(self._start_askpass())  # git auth prompts → TUI popup
 
     # ── git credential prompts → TUI (GIT_ASKPASS relay) ─────────
@@ -865,8 +886,9 @@ class GitkitApp(App):
     # so a slow workstation never freezes the UI; only the widget update
     # (_apply_load_data) runs on the main thread.
     def action_reload(self) -> None:  # the `r` key
-        self._set_status("Loading...")
-        self._begin_reload(ready=True)
+        async def run():
+            return "已重新整理"
+        self._enqueue(run, "重新整理", modal=True, cancellable=False)
 
     def _begin_reload(self, ready: bool = False) -> None:
         """Refresh the whole view in the background (non-blocking)."""
@@ -1018,16 +1040,19 @@ class GitkitApp(App):
         self._cancel_info()
         self._info_timer = self.set_timer(INFO_DEBOUNCE, lambda: self._fire_info(fetch))
 
+    def _busy(self) -> bool:
+        return self._cmd_task is not None and not self._cmd_task.done()
+
     def _info_loading(self) -> None:
         # show 'Loading...' as a TRANSIENT overlay — it doesn't overwrite the
         # persistent status (a write result / 執行中… / Ready), and never clobbers
-        # an in-progress write's line.
-        if not self._flow_busy:
+        # an in-progress command's line.
+        if not self._busy():
             self._render_status("Loading...")
 
     def _info_idle(self) -> None:
         # fetch done → restore whatever the persistent status was
-        if not self._flow_busy:
+        if not self._busy():
             self._render_status(self._status_msg)
 
     def _fire_info(self, fetch) -> None:
@@ -1215,38 +1240,104 @@ class GitkitApp(App):
         self._cmdhistory.insert(0, (shown, result, is_error))
         del self._cmdhistory[50:]
 
-    # ── write actions (F3) — all go through self.flow ────────────
+    # ── write actions: a single command QUEUE, run serially ──────
+    # Each op is classified into (modal?, cancellable?):
+    #   network (fetch/pull/push/update_then_*) → modal + cancellable (Esc kills)
+    #   tree-modifying local (merge/checkout/revert/commit/branch/integrate/reload)
+    #       → modal, NOT cancellable ("執行中")
+    #   staging (stage/unstage/discard) → no modal (backgroundable), queue up
     def _run_flow(self, fn, *args) -> None:
-        """Run a Flow write off the event loop. Async Flow methods (the network
-        ops fetch/pull/push) are awaited directly so they can be CANCELLED mid-run
-        (Esc) — which kills the git process; the sync local writes run in a thread.
-        A busy-guard rejects a second write while one is running."""
-        if self._flow_busy:
-            self._set_status("⚠ 上一個操作還在進行,請稍候")
-            return
-        self._flow_busy = True
-        cancellable = asyncio.iscoroutinefunction(fn)
-        if cancellable:  # network op → show a progress popup (Esc cancels)
-            self._set_status("執行中…")
-            self._progress = ProgressModal(f"正在 {self._flow_label(fn, args)} …")
+        self._enqueue(self._wrap(fn, args), self._flow_label(fn, args),
+                      **self._classify(fn))
+
+    @staticmethod
+    def _wrap(fn, args):
+        if asyncio.iscoroutinefunction(fn):
+            return lambda: fn(*args)
+        return lambda: asyncio.to_thread(fn, *args)
+
+    @staticmethod
+    def _classify(fn) -> dict:
+        if asyncio.iscoroutinefunction(fn):              # network op
+            return {"modal": True, "cancellable": True}
+        if getattr(fn, "__name__", "") in ("stage", "unstage", "discard"):
+            return {"modal": False, "cancellable": False}  # backgroundable, queue
+        return {"modal": True, "cancellable": False}     # tree-modifying local
+
+    def _enqueue(self, coro, label, *, modal, cancellable, after=None) -> None:
+        self._cmd_queue.put_nowait(
+            _Cmd(coro, label, modal=modal, cancellable=cancellable, after=after))
+
+    async def _cmd_consumer(self) -> None:
+        """The one consumer: runs queued commands one at a time."""
+        while True:
+            cmd = await self._cmd_queue.get()
+            try:
+                await self._exec_cmd(cmd)
+            except Exception:
+                pass
+            finally:
+                self._cmd_queue.task_done()
+
+    async def _exec_cmd(self, cmd: "_Cmd") -> None:
+        self.be.cmdlog.clear()
+        if cmd.modal:
+            self._progress = ProgressModal(f"正在 {cmd.label} …", cancellable=cmd.cancellable)
             self.push_screen(self._progress, self._on_progress_dismiss)
         else:
-            self._set_status("執行中…")
-        self._flow_worker = self.run_worker(self._run_flow_async(fn, args), group="flow")
+            self._set_status(f"執行中:{cmd.label}…")
+        self._cmd_task = asyncio.ensure_future(cmd.coro())
+        try:
+            msg, err = await self._cmd_task, None
+        except FlowError as e:
+            msg, err = None, str(e)
+        except asyncio.CancelledError:          # only reachable for cancellable cmds
+            await self._reload_now()
+            self._dismiss_progress()
+            self._set_status("已中止操作(git 已停止)")
+            return
+        finally:
+            self._cmd_task = None
+        cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
+        if err is not None:
+            self._record(cmds, err, True)
+            self._flash_command(cmds)
+            self._dismiss_progress()
+            self._set_status(f"⚠ {err}")
+            self._open_conflict_resolver()
+            return
+        self._record(cmds, msg, False)
+        self._flash_command(cmds)
+        await self._reload_now()       # tree shows the change BEFORE the modal closes
+        self._dismiss_progress()
+        self._set_status(msg)
+        self._open_conflict_resolver()
+        if cmd.after:
+            cmd.after(msg)
+
+    async def _reload_now(self) -> None:
+        try:
+            self._apply_load_data(await asyncio.to_thread(self._fetch_load_data))
+        except BackendError:
+            pass
 
     @staticmethod
     def _flow_label(fn, args) -> str:
         names = {"fetch": "fetch", "pull": "pull", "push": "push",
-                 "update_then_merge": "更新並合併", "update_then_push": "更新後 push"}
-        label = names.get(getattr(fn, "__name__", ""), "remote 操作")
+                 "update_then_merge": "更新並合併", "update_then_push": "更新後 push",
+                 "merge_into": "merge", "integrate": "整合", "revert": "revert",
+                 "checkout": "checkout", "commit": "commit",
+                 "stage": "stage", "unstage": "unstage", "discard": "discard"}
+        label = names.get(getattr(fn, "__name__", ""), "git 操作")
         target = args[0] if args else ""
+        if isinstance(target, (list, tuple)):
+            target = target[0] if target else ""
         return f"{label} {target}".strip()
 
     def _on_progress_dismiss(self, result) -> None:
-        # the modal closed: by the app (op done) or by Esc ('cancel' → abort op)
         self._progress = None
-        if result == "cancel" and self._flow_worker is not None:
-            self._flow_worker.cancel()  # → CancelledError → kill git tree
+        if result == "cancel" and self._cmd_task is not None and not self._cmd_task.done():
+            self._cmd_task.cancel()  # → CancelledError → kill git tree
 
     def _dismiss_progress(self) -> None:
         p = self._progress
@@ -1256,39 +1347,6 @@ class GitkitApp(App):
                 p.dismiss(None)
             except Exception:
                 pass
-
-    async def _run_flow_async(self, fn, args) -> None:
-        self.be.cmdlog.clear()
-        try:
-            if asyncio.iscoroutinefunction(fn):
-                msg = await fn(*args)                      # network op — cancellable
-            else:
-                msg = await asyncio.to_thread(fn, *args)   # local write — threaded
-            err = None
-        except FlowError as e:
-            msg, err = None, str(e)
-        except asyncio.CancelledError:
-            self._dismiss_progress()
-            self._set_status("已中止操作(git 已停止)")
-            self._begin_reload()
-            raise
-        finally:
-            self._flow_busy = False
-        self._dismiss_progress()  # backend done → notify front-end: close the popup
-        # WRITE_SUBCMDS filter isolates this write's commands even if a background
-        # reload appended reads to the shared cmdlog meanwhile.
-        cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
-        if err is not None:
-            self._record(cmds, err, True)
-            self._flash_command(cmds)
-            self._set_status(f"⚠ {err}")
-            self._open_conflict_resolver()  # a merge/revert that conflicted → guide
-            return
-        self._record(cmds, msg, False)
-        self._begin_reload()  # background refresh; status below stays put
-        self._flash_command(cmds)
-        self._set_status(msg)
-        self._open_conflict_resolver()
 
     def _flash_command(self, cmds) -> None:
         """Show the git command(s) that ran in the Info header (6s, then revert)."""
@@ -1356,20 +1414,16 @@ class GitkitApp(App):
     def _branch_then_commit(self, name) -> None:
         if not name:
             return
-        self.be.cmdlog.clear()
-        try:
-            self.flow.create_branch(name)
-            self.flow.checkout(name)
-        except FlowError as e:
-            cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
-            self._record(cmds, str(e), True)
-            self._set_status(f"⚠ {e}")
-            return
-        cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
-        self._record(cmds, f"已建立並切換到 {name}", False)
-        self._begin_reload()
-        self._set_status(f"已建立並切換到 {name},接著輸入 commit 訊息")
-        self.push_screen(InputModal("Commit message:", "summary"), self._after_commit)
+
+        async def run():
+            await asyncio.to_thread(self.flow.create_branch, name)
+            await asyncio.to_thread(self.flow.checkout, name)
+            return f"已建立並切換到 {name},接著輸入 commit 訊息"
+
+        def after(_msg):
+            self.push_screen(InputModal("Commit message:", "summary"), self._after_commit)
+
+        self._enqueue(run, f"建立分支 {name}", modal=True, cancellable=False, after=after)
 
     def _after_commit(self, message) -> None:
         if message:
@@ -1406,20 +1460,13 @@ class GitkitApp(App):
     def _after_branch(self, name) -> None:
         if not name:
             return
-        self.be.cmdlog.clear()
-        try:
-            self.flow.create_branch(name)
-            self.flow.checkout(name)  # create AND switch to it
-        except FlowError as e:
-            cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
-            self._record(cmds, str(e), True)
-            self._set_status(f"⚠ {e}")
-            return
-        cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
-        self._record(cmds, f"已建立並切換到 {name}", False)
-        self._begin_reload()
-        self._flash_command(cmds)
-        self._set_status(f"已建立並切換到 {name}")
+
+        async def run():
+            await asyncio.to_thread(self.flow.create_branch, name)
+            await asyncio.to_thread(self.flow.checkout, name)  # create AND switch
+            return f"已建立並切換到 {name}"
+
+        self._enqueue(run, f"建立分支 {name}", modal=True, cancellable=False)
 
     def action_revert(self) -> None:
         """Create an inverse commit undoing the selected Tree commit (safe — no
