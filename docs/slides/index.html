@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gitkit — 操作教學</title>
 <style>
-  :root { --bg:#0d1117; --fg:#c9d1d9; --dim:#8b949e; --accent:#fea62b; --line:#30363d; }
+  :root { --bg:#0d1117; --fg:#c9d1d9; --dim:#8b949e; --accent:#fea62b;
+          --line:#30363d; --good:#3fb950; --info:#58a6ff; --warn:#d29922; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
     font-family:"Segoe UI","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; }
@@ -15,28 +16,48 @@
   #bar .t { font-weight:600; color:var(--accent); font-size:17px; }
   #bar .c { color:var(--dim); font-variant-numeric:tabular-nums; }
   .slide { display:none; position:fixed; top:46px; bottom:40px; left:0; right:0;
-    padding:14px 26px; overflow:auto; flex-direction:column; align-items:center; }
+    padding:12px 30px; overflow:auto; flex-direction:column; align-items:center; }
   .slide.on { display:flex; }
-  .step { font-size:22px; margin:2px 0 4px; }
+  .step { font-size:21px; margin:1px 0 3px; font-weight:600; }
   .step b { color:var(--accent); }
-  .step kbd { background:#21262d; border:1px solid var(--line); border-radius:5px;
+  kbd, .step kbd { background:#21262d; border:1px solid var(--line); border-radius:5px;
     padding:1px 9px; font-family:Consolas,monospace; color:#e6edf3; }
-  .hint { color:var(--dim); font-size:16px; margin:0 0 8px; }
-  /* the screenshot is the star — show it BIG so the Chinese stays legible */
+  .hint { color:var(--dim); font-size:15.5px; margin:0 0 4px; max-width:1180px;
+    text-align:center; line-height:1.5; }
+  .conseq { font-size:15px; margin:2px 0 6px; padding:4px 14px; border-radius:6px;
+    background:rgba(63,185,80,.10); border:1px solid rgba(63,185,80,.35);
+    color:#aee0b6; max-width:1180px; }
+  .conseq b { color:var(--good); }
   .shot { flex:1; min-height:0; display:flex; align-items:center; justify-content:center;
     width:100%; }
   .shot img { max-width:100%; max-height:100%; border:1px solid var(--line);
     border-radius:8px; }
-  h1 { font-size:40px; margin:.2em 0; }
-  p,li { font-size:20px; line-height:1.55; }
+  h1 { font-size:42px; margin:.15em 0; }
+  h2 { font-size:30px; color:var(--accent); margin:.2em 0 .35em; }
+  p,li { font-size:19px; line-height:1.55; }
   .sub { color:var(--dim); }
-  code { background:#161b22; padding:2px 8px; border-radius:5px; }
+  code { background:#161b22; padding:2px 8px; border-radius:5px;
+    font-family:Consolas,monospace; }
   .center { justify-content:center; text-align:center; }
-  table { border-collapse:collapse; font-size:19px; }
-  td,th { border:1px solid var(--line); padding:6px 16px; text-align:left; }
+  table { border-collapse:collapse; font-size:17.5px; }
+  td,th { border:1px solid var(--line); padding:6px 14px; text-align:left;
+    vertical-align:top; }
   th { color:var(--accent); }
-  kbd { background:#21262d; border:1px solid var(--line); border-radius:5px;
-    padding:1px 9px; font-family:Consolas,monospace; color:#e6edf3; }
+  .flow { display:flex; align-items:stretch; gap:14px; margin:14px 0; flex-wrap:wrap;
+    justify-content:center; }
+  .zone { border:1px solid var(--line); border-radius:10px; padding:14px 18px;
+    min-width:190px; background:#161b22; }
+  .zone .h { font-size:21px; font-weight:700; margin-bottom:6px; }
+  .zone .k { font-size:14px; color:var(--dim); }
+  .zone small { color:var(--dim); font-size:14.5px; }
+  .arrow { align-self:center; color:var(--accent); font-size:24px; font-weight:700; }
+  .two { display:flex; gap:30px; align-items:flex-start; max-width:1240px; }
+  .two > div { flex:1; }
+  ul { margin:.2em 0; }
+  .legend { font-size:18px; line-height:1.9; }
+  .legend .g { color:var(--good); } .legend .b { color:var(--info); }
+  .tag { font-family:Consolas,monospace; padding:1px 7px; border-radius:4px;
+    background:#21262d; border:1px solid var(--line); font-size:15px; }
   #nav { position:fixed; bottom:0; left:0; right:0; height:40px; display:flex;
     align-items:center; justify-content:center; gap:16px; border-top:1px solid var(--line);
     background:#161b22; color:var(--dim); font-size:14px; }
@@ -50,66 +71,205 @@
 <!-- 1 title -->
 <section class="slide center">
   <h1>gitkit 操作教學</h1>
-  <p>用一個例子走完一次日常流程:<b style="color:var(--accent)">改檔 → 暫存 → 提交 → 推送 → 解決衝突</b></p>
-  <p class="sub">開啟方式:<code>python -m gitkit /你的/git/專案路徑</code></p>
-  <p class="sub">移動:<kbd>↑</kbd><kbd>↓</kbd> 或 <kbd>j</kbd><kbd>k</kbd>　切換面板:<kbd>Tab</kbd>　說明:<kbd>?</kbd>　離開:<kbd>q</kbd></p>
+  <p>一個跑在終端機裡的 <b style="color:var(--accent)">git 視覺化小工具</b> —
+     把改了什麼、暫存了什麼、跟遠端差多少,全部畫在同一個畫面上。</p>
+  <p class="sub">我們用<b style="color:var(--accent)">一個完整的範例</b>走一遍日常:
+     看遠端 → 拉更新 → 改檔 → 暫存 → 提交 → 分支/合併 → 撤銷 → 推送 → 解衝突</p>
+  <p class="sub">開啟:<code>python -m gitkit /你的/git/專案路徑</code></p>
+  <p class="sub">移動 <kbd>↑</kbd><kbd>↓</kbd> / <kbd>j</kbd><kbd>k</kbd>
+     切換面板 <kbd>Tab</kbd>　展開 <kbd>Enter</kbd>　說明 <kbd>?</kbd>　離開 <kbd>q</kbd></p>
 </section>
 
-<!-- 2 dashboard -->
-<section class="slide">
-  <p class="step">① 開啟後的畫面</p>
-  <p class="hint">左邊三欄是檔案狀態(Untracked／Modified／Staged),中間是分支線圖,下面 Info 顯示選到項目的內容。</p>
-  <div class="shot"><img src="img/1_dashboard.svg" alt="dashboard"></div>
-</section>
-
-<!-- 3 modified -->
-<section class="slide">
-  <p class="step">② 改了檔案 → 出現在 <b>Modified</b></p>
-  <p class="hint">用 <kbd>Tab</kbd> 切到 Modified 欄、用 <kbd>↑</kbd><kbd>↓</kbd> 選檔(或滑鼠單擊),下方 Info 立刻顯示這個檔的改動。</p>
-  <div class="shot"><img src="img/2_modified.svg" alt="modified"></div>
-</section>
-
-<!-- 4 stage -->
-<section class="slide">
-  <p class="step">③ 按 <kbd>Space</kbd> 暫存 → 移到 <b>Staged</b></p>
-  <p class="hint">暫存後,中間線圖最上方會出現「◌ 1 staged」提醒你有待提交的內容。</p>
-  <div class="shot"><img src="img/3_staged.svg" alt="staged"></div>
-</section>
-
-<!-- 5 commit -->
-<section class="slide">
-  <p class="step">④ 按 <kbd>c</kbd> 輸入訊息 → 提交</p>
-  <p class="hint">打好 commit 訊息按 <kbd>Enter</kbd> 即送出;執行時會跳出「執行中」小視窗,完成後狀態列顯示結果。</p>
-  <div class="shot"><img src="img/4_commit.svg" alt="commit"></div>
-</section>
-
-<!-- 6 push guard -->
-<section class="slide">
-  <p class="step">⑤ 按 <kbd>P</kbd> 推送 → 偵測到落後,先整合</p>
-  <p class="hint">遠端有別人的新 commit 時,工具會先攔下來提醒,讓你選「先整合遠端更新」再推,避免被拒。</p>
-  <div class="shot"><img src="img/5_push_guard.svg" alt="push guard"></div>
-</section>
-
-<!-- 7 conflict -->
-<section class="slide">
-  <p class="step">⑥ 遇到衝突 → 在畫面裡解決</p>
-  <p class="hint">同一行被兩邊改到時自動跳出此畫面:選一個檔,按 <kbd>o</kbd> 採用我方 / <kbd>t</kbd> 採用對方 / <kbd>e</kbd> 已手動編輯,全部處理完按 <kbd>c</kbd> 完成。</p>
-  <div class="shot"><img src="img/6_conflict.svg" alt="conflict"></div>
-</section>
-
-<!-- 8 keys -->
+<!-- 2 concept: four zones -->
 <section class="slide center">
-  <p class="step">常用按鍵速查</p>
+  <h2>先懂一個觀念:你的檔案有「四個位置」</h2>
+  <p class="hint">git 不是只有「存檔」。一份改動會依序經過四個地方,gitkit 的版面就是照這條線排的。</p>
+  <div class="flow">
+    <div class="zone"><div class="h">工作區</div>
+      <small>你正在編輯的檔案。改了還沒處理的,出現在 <span class="tag">Modified</span> /
+      新檔在 <span class="tag">Untracked</span>。</small></div>
+    <div class="arrow">→</div>
+    <div class="zone"><div class="h">暫存區</div>
+      <small>挑好「這次要提交哪些」。放進來的檔案出現在 <span class="tag">Staged</span>。
+      <div class="k">放入 = <kbd>Space</kbd></div></small></div>
+    <div class="arrow">→</div>
+    <div class="zone"><div class="h">本地庫</div>
+      <small>真正記一筆歷史(commit),畫在中間的<b>線圖</b>上。
+      <div class="k">提交 = <kbd>c</kbd></div></small></div>
+    <div class="arrow">→</div>
+    <div class="zone"><div class="h">遠端庫</div>
+      <small>團隊共用的伺服器(origin)。
+      <div class="k">送出 <kbd>P</kbd> · 取回 <kbd>f</kbd>/<kbd>p</kbd></div></small></div>
+  </div>
+  <p class="hint">記住這條由左到右的線 — 後面每個操作,都只是把改動往右推一格,或從右邊拉回來。</p>
+</section>
+
+<!-- 3 dashboard tour -->
+<section class="slide">
+  <p class="step">主畫面導覽 — 一眼看懂三個區塊</p>
+  <p class="hint">左邊三欄 = 檔案狀態(對應「工作區/暫存區」);中間 = 歷史<b>線圖</b>(本地庫);
+     下方 <b>Info</b> = 你選到的東西的細節。用 <kbd>Tab</kbd> 在區塊間移動。</p>
+  <div class="shot"><img src="img/01_dashboard.svg" alt="dashboard"></div>
+</section>
+
+<!-- 4 how to read the graph -->
+<section class="slide">
+  <p class="step">線圖怎麼看 — 每個符號都有意思</p>
+  <div class="two">
+    <div class="legend">
+      <p><span class="g">●</span> 一個 commit(一筆歷史)。<span class="b">◆</span> 是合併點。</p>
+      <p><span class="tag">HEAD</span> = 你現在站在哪一筆;<span class="tag">master</span>
+         <span class="tag">feature/login</span> 是分支標籤。</p>
+      <p><span class="g">實心 ●</span> = 已經推上遠端;<span style="color:var(--dim)">空心 ○ / 虛線</span>
+         = 只在本地、還沒推。</p>
+      <p><span class="tag">origin/master</span> 標籤 = 遠端目前停在哪 —
+         和你的 <span class="tag">master</span> 差幾格,一看就知道。</p>
+    </div>
+    <div>
+      <p class="hint" style="text-align:left">右邊每一列:<br>
+         線圖　短編號　分支標籤　作者　訊息</p>
+      <p class="conseq"><b>後果提示:</b>把游標停在某一列,下方 Info 會立刻顯示那筆 commit
+         改了哪些檔、訊息是什麼 — 不用切畫面。</p>
+    </div>
+  </div>
+  <div class="shot"><img src="img/07_push_guard.svg" alt="graph"></div>
+</section>
+
+<!-- 5 fetch -->
+<section class="slide">
+  <p class="step">① <b>fetch</b>(按 <kbd>f</kbd>)— 先看遠端有什麼新東西</p>
+  <p class="hint">fetch 只去問遠端「你那邊到哪了」,把資訊抓回來,<b>完全不動你的檔案、也不改你的分支</b>。
+     最安全、隨時可按。</p>
+  <p class="conseq"><b>後果:</b>線圖上會多出 <span class="tag">origin/master</span> 的新節點
+     (圖中 <code>測試中</code> 那筆是別人推的)。你會看到「自己領先 1、落後 1」—
+     代表你和遠端各走了一條線。</p>
+  <div class="shot"><img src="img/06_fetch.svg" alt="fetch"></div>
+</section>
+
+<!-- 6 pull -->
+<section class="slide">
+  <p class="step">② <b>pull</b>(按 <kbd>p</kbd>)— 把遠端更新拉下來併進來</p>
+  <p class="hint">pull = 取回 + 併入目前分支。若只是你落後,直接快轉更新;
+     若雙方<b>各有新 commit(分歧)</b>,工具會停下來問你怎麼整合,而不是硬幹。</p>
+  <p class="conseq"><b>後果:</b>分歧時跳出此提示 —
+     按 <kbd>i</kbd> 用合併整合(可能要解衝突)、<kbd>f</kbd> 重新檢查、<kbd>Esc</kbd> 先不動。
+     乾淨的情況則直接把遠端的 commit 接到你的線上。</p>
+  <div class="shot"><img src="img/10_pull.svg" alt="pull"></div>
+</section>
+
+<!-- 7 modified -->
+<section class="slide">
+  <p class="step">③ 改了檔案 → 自動出現在 <b>Modified</b></p>
+  <p class="hint">你在編輯器改了 <code>README.md</code>,回到 gitkit:<kbd>Tab</kbd> 切到 Modified,
+     用 <kbd>↑</kbd><kbd>↓</kbd> 選檔(或滑鼠單擊)。</p>
+  <p class="conseq"><b>後果:</b>下方 Info 立刻顯示這個檔<b>改了哪幾行</b>
+     (綠 +、紅 −),提交前先確認自己改了什麼。</p>
+  <div class="shot"><img src="img/02_modified.svg" alt="modified"></div>
+</section>
+
+<!-- 8 stage -->
+<section class="slide">
+  <p class="step">④ 按 <kbd>Space</kbd> 暫存 → 檔案移到 <b>Staged</b></p>
+  <p class="hint">暫存 = 告訴 git「這次提交要包含這個檔」。沒暫存的改動不會被提交 —
+     所以你可以一次只挑一部分。</p>
+  <p class="conseq"><b>後果:</b>檔案從 Modified 跳到 Staged;線圖最上方多一列
+     <span class="tag">◌ N staged</span> 提醒你「有東西等著提交」。再按一次 <kbd>Space</kbd> 可取消暫存。</p>
+  <div class="shot"><img src="img/08_staged.svg" alt="staged"></div>
+</section>
+
+<!-- 9 commit -->
+<section class="slide">
+  <p class="step">⑤ 按 <kbd>c</kbd> 輸入訊息 → 正式提交</p>
+  <p class="hint">提交 = 把暫存區的內容,在本地庫記成一筆<b>有訊息、可回溯</b>的歷史。
+     訊息寫清楚「做了什麼」,以後找得回。</p>
+  <p class="conseq"><b>後果:</b><span class="tag">HEAD</span> 往前進一格、線圖多一個節點,
+     工作區回到乾淨。注意:這只記在<b>本地</b>,還沒上傳遠端。</p>
+  <div class="shot"><img src="img/09_commit.svg" alt="commit"></div>
+</section>
+
+<!-- 10 branches -->
+<section class="slide">
+  <p class="step">⑥ 分支:按 <kbd>l</kbd> 看清單 / <kbd>b</kbd> 開新分支</p>
+  <p class="hint">分支 = 一條<b>平行的開發線</b>,可以放心試做新功能而不影響 master。
+     <kbd>l</kbd> 列出本地與遠端分支,<kbd>Enter</kbd> 切換過去;<kbd>b</kbd> 建立並切到新分支。</p>
+  <p class="conseq"><b>後果:</b>切換分支後,左邊標題列的分支名、線圖的 <span class="tag">HEAD</span>
+     位置都會跟著變 — 你會清楚知道自己「現在站在哪條線上」。</p>
+  <div class="shot"><img src="img/03_branches.svg" alt="branches"></div>
+</section>
+
+<!-- 11 merge -->
+<section class="slide">
+  <p class="step">⑦ <b>merge</b>(按 <kbd>m</kbd>)— 把目前分支併進另一條</p>
+  <p class="hint">做完 <code>feature/login</code> 想併回主線時用 merge。選一個目標分支,
+     工具會先幫你切過去再合併。</p>
+  <p class="conseq"><b>後果:</b>能直接快轉就快轉;否則產生一個<b>合併節點 ◆</b>把兩條線接起來。
+     若兩邊改到同一行 → 進入衝突解決(見後面)。</p>
+  <div class="shot"><img src="img/04_merge.svg" alt="merge"></div>
+</section>
+
+<!-- 12 revert -->
+<section class="slide">
+  <p class="step">⑧ <b>revert</b>(按 <kbd>v</kbd>)— 安全地撤銷一筆 commit</p>
+  <p class="hint">在線圖選一筆 commit 按 <kbd>v</kbd>。revert <b>不是刪掉歷史</b>,而是再記一筆
+     「把它做的事反過來」的新 commit — 對已經分享出去的歷史最安全。</p>
+  <p class="conseq"><b>後果:</b>原本那筆 commit <b>仍然保留</b>在線圖上,只是多一個反向 commit
+     抵銷它的內容。隨時還能查到當初改了什麼。</p>
+  <div class="shot"><img src="img/05_revert.svg" alt="revert"></div>
+</section>
+
+<!-- 13 push -->
+<section class="slide">
+  <p class="step">⑨ <b>push</b>(按 <kbd>P</kbd>)— 把本地 commit 推上遠端</p>
+  <p class="hint">提交只在本地,push 才會讓團隊看到。若遠端已經有別人的新 commit,
+     工具會<b>先攔下來</b>,避免你推不上去或蓋掉別人。</p>
+  <p class="conseq"><b>後果:</b>偵測到落後/分歧時跳此提示 —
+     <kbd>i</kbd> 先整合遠端更新再推,是最穩的選擇;整合後線圖上的空心節點會變實心(已推送)。</p>
+  <div class="shot"><img src="img/07_push_guard.svg" alt="push guard"></div>
+</section>
+
+<!-- 14 conflict -->
+<section class="slide">
+  <p class="step">⑩ 遇到衝突 → 在畫面裡逐檔解決</p>
+  <p class="hint">同一行被兩邊改到時(這裡 <code>狀態:穩定版</code> vs <code>測試中</code>)會自動跳出此畫面。
+     左邊選一個檔,右邊看雙方版本。</p>
+  <p class="conseq"><b>後果 / 怎麼選:</b><kbd>o</kbd> 採用我方 ·
+     <kbd>t</kbd> 採用對方 · <kbd>e</kbd> 我已手動編輯。每個檔都處理完,按 <kbd>c</kbd> 完成合併;
+     想反悔按 <kbd>a</kbd> 放棄、<kbd>Esc</kbd> 稍後再處理。</p>
+  <div class="shot"><img src="img/11_conflict.svg" alt="conflict"></div>
+</section>
+
+<!-- 15 panel → consequence table -->
+<section class="slide center">
+  <h2>面板上每個動作 → 會發生什麼</h2>
+  <table>
+    <tr><th>你做的事</th><th>按鍵</th><th>畫面上的後果</th></tr>
+    <tr><td>選 Modified 的檔</td><td><kbd>↑↓</kbd> / 單擊</td><td>Info 顯示該檔改了哪幾行</td></tr>
+    <tr><td>暫存 / 取消暫存</td><td><kbd>Space</kbd></td><td>檔案在 Modified ↔ Staged 之間移動;線圖出現/移除「◌ staged」</td></tr>
+    <tr><td>丟棄改動</td><td><kbd>d</kbd></td><td>該檔工作區變更被還原(不可復原,會先問你)</td></tr>
+    <tr><td>提交</td><td><kbd>c</kbd></td><td>線圖多一個節點,HEAD 前進,工作區變乾淨(仍在本地)</td></tr>
+    <tr><td>fetch / pull</td><td><kbd>f</kbd> / <kbd>p</kbd></td><td>fetch 只更新 origin 標籤;pull 還會把更新併進來</td></tr>
+    <tr><td>push</td><td><kbd>P</kbd></td><td>本地節點變成「已推送」(空心→實心);落後時先擋下</td></tr>
+    <tr><td>切換 / 合併 / 撤銷</td><td><kbd>l</kbd> · <kbd>m</kbd> · <kbd>v</kbd></td><td>HEAD 換線 / 線圖出現合併點 / 多一筆反向 commit</td></tr>
+  </table>
+  <p class="hint">原則:<b>有風險的動作(丟棄、合併、推送)都會先跳提示</b>,看清楚再決定。</p>
+</section>
+
+<!-- 16 cheat sheet -->
+<section class="slide center">
+  <h2>常用按鍵速查</h2>
   <table>
     <tr><th>做什麼</th><th>按鍵</th></tr>
-    <tr><td>移動 / 切換面板 / 展開 diff</td><td><kbd>↑↓ j k</kbd> · <kbd>Tab</kbd> · <kbd>Enter</kbd></td></tr>
+    <tr><td>移動 / 切換面板 / 展開內容</td><td><kbd>↑↓ j k</kbd> · <kbd>Tab</kbd> · <kbd>Enter</kbd></td></tr>
     <tr><td>暫存 / 取消暫存 · 丟棄改動</td><td><kbd>Space</kbd> · <kbd>d</kbd></td></tr>
     <tr><td>提交</td><td><kbd>c</kbd></td></tr>
     <tr><td>分支清單 / 建立分支 / 合併</td><td><kbd>l</kbd> · <kbd>b</kbd> · <kbd>m</kbd></td></tr>
-    <tr><td>抓取 / 拉取 / 推送</td><td><kbd>f</kbd> · <kbd>p</kbd> · <kbd>P</kbd></td></tr>
-    <tr><td>回退 commit · 解決衝突</td><td><kbd>v</kbd> · <kbd>x</kbd></td></tr>
+    <tr><td>取回遠端 / 拉取 / 推送</td><td><kbd>f</kbd> · <kbd>p</kbd> · <kbd>P</kbd></td></tr>
+    <tr><td>撤銷 commit · 解決衝突</td><td><kbd>v</kbd> · <kbd>x</kbd></td></tr>
     <tr><td>指令紀錄 · 重新整理 · 說明 · 離開</td><td><kbd>o</kbd> · <kbd>r</kbd> · <kbd>?</kbd> · <kbd>q</kbd></td></tr>
   </table>
+  <p class="hint" style="margin-top:14px">心法:<b>左到右把改動往遠端推</b> —
+     工作區 → <kbd>Space</kbd> 暫存 → <kbd>c</kbd> 提交 → <kbd>P</kbd> 推送;
+     不確定時先 <kbd>f</kbd> 看一下遠端、有疑慮就讓提示擋著你。</p>
 </section>
 
 <div id="nav">
