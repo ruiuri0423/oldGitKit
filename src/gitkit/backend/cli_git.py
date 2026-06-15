@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import signal
 import subprocess
+import sys
 import tarfile
 
 from gitkit.backend.base import BackendError, GitBackend, MergeResult
@@ -39,9 +41,16 @@ class CliGitBackend(GitBackend):
         self.root = root
         self.git = git
         self._caps: Capabilities | None = None
-        # Clean, parse-friendly environment: no pager, no color leakage.
+        # Clean, parse-friendly environment: no pager, no color leakage, and —
+        # crucially for a TUI — NEVER block on an interactive auth/host prompt.
+        # Without these a remote that wants credentials would hang git (and the
+        # whole UI); with them the network op fails fast with a clear error.
         self._env = dict(os.environ)
         self._env["GIT_PAGER"] = "cat"
+        self._env["GIT_TERMINAL_PROMPT"] = "0"   # git 2.3+: don't prompt on the tty
+        self._env["GCM_INTERACTIVE"] = "never"   # Git Credential Manager: no GUI popup
+        self._env.setdefault(
+            "GIT_SSH_COMMAND", "ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new")
         # every invocation's args (without the boilerplate prefix) are recorded
         # here so the UI can surface the actual git command that ran
         self.cmdlog: list[list[str]] = []
@@ -75,6 +84,7 @@ class CliGitBackend(GitBackend):
         proc = subprocess.run(
             argv,
             cwd=self.root,
+            stdin=subprocess.DEVNULL,  # never read stdin → prompts fail fast, no hang
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=self._env,
@@ -95,29 +105,53 @@ class CliGitBackend(GitBackend):
         """Run without raising; return (returncode, stdout_bytes, stderr_text)."""
         self.cmdlog.append(list(args))
         argv = self._argv(args)
-        proc = subprocess.run(argv, cwd=self.root, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, env=self._env)
+        proc = subprocess.run(argv, cwd=self.root, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=self._env)
         return proc.returncode, proc.stdout, proc.stderr.decode("utf-8", "replace")
 
+    @staticmethod
+    def _new_group_kwargs() -> dict:
+        # start the child in its own process group so cancellation can kill the
+        # WHOLE tree (git + any credential helper / ssh / askpass it spawned).
+        if sys.platform == "win32":
+            return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {"start_new_session": True}
+
+    @staticmethod
+    def _kill_tree(proc) -> None:
+        if proc.returncode is not None:
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
     async def _run_async(self, args: list[str], *, check: bool = True) -> bytes:
-        """Run a git command off the event loop and — crucially — KILL the git
-        process if the awaiting task is cancelled. This is the real front↔back
+        """Run a git command off the event loop and — crucially — KILL the whole
+        process tree if the awaiting task is cancelled. This is the real front↔back
         interrupt used by the cancellable Info reads AND the network writes
-        (fetch/pull/push), so a slow op can be aborted mid-flight with no
-        lingering git process."""
+        (fetch/pull/push): an aborted op leaves no lingering git/ssh/credential
+        children. stdin=DEVNULL means an auth prompt fails fast instead of hanging."""
         self.cmdlog.append(list(args))
         argv = self._argv(args)
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=self.root,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=self._env)
+            env=self._env, **self._new_group_kwargs())
         try:
             out, err = await proc.communicate()
         except asyncio.CancelledError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+            self._kill_tree(proc)
             await proc.wait()
             raise
         if check and proc.returncode != 0:

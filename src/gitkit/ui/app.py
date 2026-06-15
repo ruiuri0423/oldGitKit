@@ -771,7 +771,7 @@ class GitkitApp(App):
     # so a slow workstation never freezes the UI; only the widget update
     # (_apply_load_data) runs on the main thread.
     def action_reload(self) -> None:  # the `r` key
-        self._set_status("loading…")
+        self._set_status("Loading...")
         self._begin_reload(ready=True)
 
     def _begin_reload(self, ready: bool = False) -> None:
@@ -925,11 +925,11 @@ class GitkitApp(App):
         self._info_timer = self.set_timer(INFO_DEBOUNCE, lambda: self._fire_info(fetch))
 
     def _info_loading(self) -> None:
-        # show 'loading…' as a TRANSIENT overlay — it doesn't overwrite the
+        # show 'Loading...' as a TRANSIENT overlay — it doesn't overwrite the
         # persistent status (a write result / 執行中… / Ready), and never clobbers
         # an in-progress write's line.
         if not self._flow_busy:
-            self._render_status("loading…")
+            self._render_status("Loading...")
 
     def _info_idle(self) -> None:
         # fetch done → restore whatever the persistent status was
