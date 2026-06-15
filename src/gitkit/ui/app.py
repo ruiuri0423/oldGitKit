@@ -36,11 +36,9 @@ LANE_COLORS = ["bright_cyan", "bright_magenta", "bright_green", "bright_yellow",
 WRITE_SUBCMDS = {"add", "reset", "checkout", "commit", "branch", "merge",
                  "pull", "push", "fetch", "stash", "archive", "rm", "revert"}
 
-# Info-panel timing: only fetch a row's details after the cursor dwells this long
-# (so fast scrolling doesn't fire/abort a subprocess per row); pop a 'syncing'
-# notice if a fetch then takes longer than the slow threshold.
+# Info-panel timing: only fetch a row's details after the cursor dwells this long,
+# so fast scrolling doesn't fire/abort a subprocess per row.
 INFO_DEBOUNCE = 0.25  # seconds the cursor must rest before fetching Info
-INFO_SLOW = 1.5       # seconds before "同步資料中,請稍候" toast
 
 
 def _fmt_cmd(args) -> str:
@@ -904,19 +902,19 @@ class GitkitApp(App):
         t.append(f"-{f.removed}", style="red")
         return (t, sha, f.path, staged)
 
-    # ── debounced Info fetch ─────────────────────────────────────
+    # ── debounced + interruptible Info fetch ─────────────────────
     def _schedule_info(self, header, fetch) -> None:
         """Update the Info panel with a dwell delay. `header()` runs now (instant,
-        no git). `fetch` is an async coroutine doing the subprocess read + applying
-        the result; it only runs after the cursor rests INFO_DEBOUNCE seconds, and
-        an in-flight fetch is aborted the moment the cursor moves on — so scrolling
-        through commits never fires/blocks on a subprocess per row."""
+        no git). The stale diff is cleared and the bottom-left flips to 'loading…'
+        right away, so the user is never left staring at the previous row. `fetch`
+        (an async coroutine) only runs after the cursor rests INFO_DEBOUNCE seconds,
+        and is hard-aborted the moment the cursor moves on — _cancel_info cancels
+        the worker, which KILLS the in-flight git process (see _text_async)."""
         header()
-        if self._info_timer is not None:
-            self._info_timer.stop()
-        if self._info_worker is not None:
-            self._info_worker.cancel()  # abort the previous row's fetch
-            self._info_worker = None
+        self._fill_difflist([])          # drop the previous row's file list
+        self._info_msg("載入中…")
+        self._set_status("loading…")
+        self._cancel_info()
         self._info_timer = self.set_timer(INFO_DEBOUNCE, lambda: self._fire_info(fetch))
 
     def _fire_info(self, fetch) -> None:
@@ -924,24 +922,22 @@ class GitkitApp(App):
             self._info_guard(fetch), exclusive=True, group="info")
 
     async def _info_guard(self, fetch) -> None:
-        # if the fetch is slow (large commit / busy disk), reassure the user
-        slow = self.set_timer(
-            INFO_SLOW,
-            lambda: self.notify("同步資料中,請稍候…", title="Info", timeout=4))
         try:
             await fetch()
+            self._set_status("Ready")
+        except asyncio.CancelledError:
+            raise  # superseded by a newer row — that fetch owns the status now
         except BackendError as e:
             self._info_msg(f"git error: {e}\n{getattr(e, 'stderr', '')}")
-        finally:
-            slow.stop()
+            self._set_status("Ready")
 
     def _info_commit(self, c) -> None:
         glyph = "◆" if c.is_merge else "●"
         refs = f"  ({', '.join(c.refs)})" if c.refs else ""
 
         async def fetch():
-            files = await asyncio.to_thread(self.be.commit_files, c.sha)
-            msg = await asyncio.to_thread(self.be.commit_message, c.sha)
+            files = await self.be.commit_files_async(c.sha)
+            msg = await self.be.commit_message_async(c.sha)
             self._fill_difflist([self._file_row(f, c.sha, False) for f in files])
             self._info_msg(msg)
 
@@ -963,11 +959,11 @@ class GitkitApp(App):
             self._set_ctx(f"{kind}: {path}")
             self._fill_difflist([])
             self._info_msg(f"(untracked) {path}\n\n新檔案,尚未進入 index。")
+            self._set_status("Ready")
             return
 
         async def fetch():
-            text = await asyncio.to_thread(self.be.file_diff, path,
-                                           staged=(kind == "staged"))
+            text = await self.be.file_diff_async(path, staged=(kind == "staged"))
             self._fill_difflist([])
             self._info_diff(text)
 
@@ -977,7 +973,7 @@ class GitkitApp(App):
         if self._info_timer is not None:
             self._info_timer.stop()
         if self._info_worker is not None:
-            self._info_worker.cancel()
+            self._info_worker.cancel()  # → CancelledError → _text_async kills git
             self._info_worker = None
 
     def action_diff_back(self) -> None:

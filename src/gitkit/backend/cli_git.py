@@ -9,6 +9,7 @@ P0 scope: read methods are implemented; write methods are stubbed.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import subprocess
@@ -97,6 +98,31 @@ class CliGitBackend(GitBackend):
         proc = subprocess.run(argv, cwd=self.root, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, env=self._env)
         return proc.returncode, proc.stdout, proc.stderr.decode("utf-8", "replace")
+
+    async def _text_async(self, args: list[str], *, check: bool = True) -> str:
+        """Run a read off the event loop and — crucially — KILL the git process if
+        the awaiting task is cancelled (the user moved off the row). This is the
+        real front↔back interrupt: no lingering git process, no wasted work."""
+        self.cmdlog.append(list(args))
+        argv = self._argv(args)
+        proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=self.root,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=self._env)
+        try:
+            out, err = await proc.communicate()
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            raise
+        if check and proc.returncode != 0:
+            raise BackendError(
+                f"git {' '.join(args)} failed ({proc.returncode})",
+                argv=argv, stderr=err.decode("utf-8", "replace").strip())
+        return out.decode("utf-8", "surrogateescape")
 
     # ── capabilities / repo basics ───────────────────────────────
     def capabilities(self) -> Capabilities:
@@ -254,12 +280,17 @@ class CliGitBackend(GitBackend):
         return self._commit_cached(
             ("show", sha), sha, lambda: self._text(["show", "--no-color", sha]))
 
-    def commit_files(self, sha: str) -> list[DiffFile]:
-        return self._commit_cached(("files", sha), sha, lambda: self._commit_files(sha))
+    _MSG_FMT = "%an  %ad%n%n%B"  # author / date / blank / full message
 
-    def _commit_files(self, sha: str) -> list[DiffFile]:
+    def commit_files(self, sha: str) -> list[DiffFile]:
+        return self._commit_cached(
+            ("files", sha), sha,
+            lambda: self._parse_commit_files(
+                self._text(["show", "--numstat", "--format=", sha])))
+
+    @staticmethod
+    def _parse_commit_files(out: str) -> list[DiffFile]:
         # `--format=` drops the commit header so only numstat lines remain
-        out = self._text(["show", "--numstat", "--format=", sha])
         result: list[DiffFile] = []
         for line in out.splitlines():
             if not line.strip():
@@ -280,14 +311,42 @@ class CliGitBackend(GitBackend):
     def commit_message(self, sha: str) -> str:
         return self._commit_cached(
             ("msg", sha), sha,
-            lambda: self._text(["log", "-1", "--format=%an  %ad%n%n%B", "--date=short", sha]))
+            lambda: self._text(["log", "-1", f"--format={self._MSG_FMT}",
+                                "--date=short", sha]))
 
     def file_diff(self, path: str, *, staged: bool = False) -> str:
+        return self._text(self._file_diff_args(path, staged))
+
+    @staticmethod
+    def _file_diff_args(path: str, staged: bool) -> list[str]:
         args = ["diff", "--no-color"]
         if staged:
             args.append("--cached")
-        args += ["--", path]
-        return self._text(args)
+        return args + ["--", path]
+
+    # ── cancellable async reads (Info panel; kill the git process on abort) ──
+    async def commit_files_async(self, sha: str) -> list[DiffFile]:
+        hit = self._commit_cache.get(("files", sha))
+        if hit is not None:
+            return hit
+        res = self._parse_commit_files(
+            await self._text_async(["show", "--numstat", "--format=", sha]))
+        if len(sha) == 40:
+            self._commit_cache[("files", sha)] = res
+        return res
+
+    async def commit_message_async(self, sha: str) -> str:
+        hit = self._commit_cache.get(("msg", sha))
+        if hit is not None:
+            return hit
+        out = await self._text_async(
+            ["log", "-1", f"--format={self._MSG_FMT}", "--date=short", sha])
+        if len(sha) == 40:
+            self._commit_cache[("msg", sha)] = out
+        return out
+
+    async def file_diff_async(self, path: str, *, staged: bool = False) -> str:
+        return await self._text_async(self._file_diff_args(path, staged))
 
     # ── staging / commit ─────────────────────────────────────────
     def stage(self, paths: list[str]) -> None:
