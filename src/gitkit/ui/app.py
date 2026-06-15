@@ -9,6 +9,7 @@ Run:  python -m gitkit <repo-path>
 """
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional
 
 from rich.text import Text
@@ -730,7 +731,7 @@ class GitkitApp(App):
         for wid, title in titles.items():
             self.query_one(f"#{wid}", ListView).border_title = title
         self.query_one("#infobox").border_title = "Info"
-        self.action_reload()
+        self._reload_sync()  # first paint is synchronous for a deterministic start
         self.query_one("#tree", ListView).focus()
         self.set_interval(0.7, self._blink_head)  # flash the HEAD row
 
@@ -752,7 +753,29 @@ class GitkitApp(App):
         self.query_one("#statusbar", Static).update(t)
 
     # ── data loading ─────────────────────────────────────────────
-    def action_reload(self) -> None:
+    # The git reads (_fetch_load_data) run off the event loop via asyncio.to_thread
+    # so a slow workstation never freezes the UI; only the widget update
+    # (_apply_load_data) runs on the main thread.
+    def action_reload(self) -> None:  # the `r` key
+        self._set_status("loading…")
+        self._begin_reload(ready=True)
+
+    def _begin_reload(self, ready: bool = False) -> None:
+        """Refresh the whole view in the background (non-blocking)."""
+        self.run_worker(self._reload_async(ready), exclusive=True, group="reload")
+
+    async def _reload_async(self, ready: bool) -> None:
+        try:
+            data = await asyncio.to_thread(self._fetch_load_data)
+        except BackendError as e:
+            self._set_status(f"git error: {e}")
+            return
+        self._apply_load_data(data)
+        if ready:
+            self._set_status("Ready")
+
+    def _reload_sync(self) -> None:
+        """Blocking load — used for the very first paint (deterministic startup)."""
         try:
             self._load()
             self._set_status("Ready")
@@ -760,20 +783,38 @@ class GitkitApp(App):
             self._set_status(f"git error: {e}")
 
     def _load(self) -> None:
+        self._apply_load_data(self._fetch_load_data())
+
+    def _fetch_load_data(self) -> dict:
+        """All git reads for a refresh — pure, runs in a worker thread."""
         be = self.be
         branch = be.current_branch()
         detached = branch is None
-        head_short = be.repo_state().head_sha[:7] if detached else ""
-        self._trunk_label = branch or f"(detached @ {head_short})"
-        op = be.pending_op()
-        conflicting = op is not None and bool(be.unmerged_paths())
-        op_zh = {"revert": "revert", "cherry-pick": "cherry-pick"}.get(op, "合併")
+        files = be.status()
+        return {
+            "branch": branch,
+            "detached": detached,
+            "head_short": be.repo_state().head_sha[:7] if detached else "",
+            "op": be.pending_op(),
+            "files": files,
+            "unmerged": bool(be.unmerged_paths()),
+            "local_branches": be.branches(),
+            "remote_branches": be.remote_branches(),
+            "commits": be.log(limit=80, all_refs=self._all_refs),
+            "remote_set": be.remote_reachable(),
+        }
+
+    def _apply_load_data(self, d: dict) -> None:
+        """Apply fetched data to widgets — runs on the main thread."""
+        self._trunk_label = d["branch"] or f"(detached @ {d['head_short']})"
+        conflicting = d["op"] is not None and d["unmerged"]
+        op_zh = {"revert": "revert", "cherry-pick": "cherry-pick"}.get(d["op"], "合併")
         self._normal_subtitle = f"{self.repo}  ·  {self._trunk_label}" + (
-            "   ⚠ DETACHED HEAD" if detached else "") + (
+            "   ⚠ DETACHED HEAD" if d["detached"] else "") + (
             f"   ⚠ {op_zh}進行中(按 x 解決衝突)" if conflicting else "")
         self.sub_title = self._normal_subtitle
 
-        files = be.status()
+        files = d["files"]
         untracked = [f.path for f in files if f.is_untracked]
         modified = [f.path for f in files if f.is_unstaged]
         staged = [f.path for f in files if f.is_staged]
@@ -781,14 +822,14 @@ class GitkitApp(App):
         self._fill_files("#modified", modified, "modified")
         self._fill_files("#staged", staged, "staged")
 
-        self._local_branches = be.branches()
-        self._remote_branches = be.remote_branches()
+        self._local_branches = d["local_branches"]
+        self._remote_branches = d["remote_branches"]
         self._local_names = {b.name for b in self._local_branches}
         self._remote_names = {b.name for b in self._remote_branches}
 
-        commits = be.log(limit=80, all_refs=self._all_refs)
+        commits = d["commits"]
         head_sha = next((c.sha for c in commits if "HEAD" in c.refs), None)
-        lines = self._gcache.render(commits, head_sha, be.remote_reachable())
+        lines = self._gcache.render(commits, head_sha, d["remote_set"])
         width = max((len(g) for g, _ in lines), default=1)
         items = []
         if staged:  # the mockup's synthetic "◌ N staged" node above HEAD
@@ -985,13 +1026,10 @@ class GitkitApp(App):
 
     def _light_reload(self) -> None:
         # refresh the main view under the modal after each resolve step
-        try:
-            self._load()
-        except BackendError:
-            pass
+        self._begin_reload()
 
     def _after_conflict(self, result) -> None:
-        self.action_reload()
+        self._begin_reload()
         if not result:
             return
         kind, msg = result
@@ -1025,7 +1063,7 @@ class GitkitApp(App):
             return
         cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
         self._record(cmds, msg, False)
-        self.action_reload()
+        self._begin_reload()  # background refresh; status below stays put
         self._flash_command(cmds)
         self._set_status(msg)
         self._open_conflict_resolver()
@@ -1107,7 +1145,7 @@ class GitkitApp(App):
             return
         cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
         self._record(cmds, f"已建立並切換到 {name}", False)
-        self.action_reload()
+        self._begin_reload()
         self._set_status(f"已建立並切換到 {name},接著輸入 commit 訊息")
         self.push_screen(InputModal("Commit message:", "summary"), self._after_commit)
 
@@ -1157,7 +1195,7 @@ class GitkitApp(App):
             return
         cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
         self._record(cmds, f"已建立並切換到 {name}", False)
-        self.action_reload()
+        self._begin_reload()
         self._flash_command(cmds)
         self._set_status(f"已建立並切換到 {name}")
 
