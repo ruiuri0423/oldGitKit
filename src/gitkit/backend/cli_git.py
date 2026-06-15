@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections import OrderedDict
 
 from gitkit.backend.base import BackendError, GitBackend, MergeResult
 from gitkit.backend.capabilities import detect
@@ -38,6 +39,8 @@ _LOG_FORMAT = _FS.join(["%H", "%P", "%d", "%an", "%ad", "%s"]) + _RS
 
 
 class CliGitBackend(GitBackend):
+    _CACHE_MAX = 400  # max cached immutable commit reads before LRU eviction
+
     def __init__(self, root: str, git: str = "git"):
         self.root = root
         self.git = git
@@ -56,8 +59,13 @@ class CliGitBackend(GitBackend):
         # here so the UI can surface the actual git command that ran
         self.cmdlog: list[list[str]] = []
         # content of a concrete commit (by 40-hex sha) never changes, so it is
-        # safe to memoise forever — makes re-visiting commits while scrolling free
-        self._commit_cache: dict = {}
+        # safe to memoise — re-visiting commits while scrolling is then free. ONE
+        # shared LRU: sync and async reads both go through _cache_get/_cache_put
+        # (same keys → cross-hit), every read marks the entry most-recently-used,
+        # so a hot commit is structurally the last to be evicted. Bounded by count
+        # (_CACHE_MAX) not bytes — the values cached here are small (numstat +
+        # message + per-file diff); large whole-commit reads aren't on this path.
+        self._commit_cache: "OrderedDict" = OrderedDict()
 
     def set_askpass(self, addr: str, token: str) -> None:
         """Route git's credential/passphrase prompts to the TUI: point GIT_ASKPASS
@@ -87,20 +95,36 @@ class CliGitBackend(GitBackend):
             os.chmod(path, 0o700)
         return path
 
+    def _cache_get(self, key):
+        """LRU read: return the cached value and mark it most-recently-used, or
+        None on a miss. Shared by the sync AND async readers (one map, same keys)
+        so a value cached by either is reused — and refreshed — by the other."""
+        val = self._commit_cache.get(key)
+        if val is not None:
+            self._commit_cache.move_to_end(key)
+        return val
+
+    def _cache_put(self, key, sha: str, val):
+        """LRU write: store an immutable per-commit value (only for a 40-hex sha;
+        'HEAD'/short refs are mutable → never cached). Over capacity, evict the
+        least-recently-USED entry — a hot commit, just move_to_end'd on its read,
+        is structurally the last to go, so eviction never cuts the hot path."""
+        if len(sha) != 40:
+            return val
+        self._commit_cache[key] = val
+        self._commit_cache.move_to_end(key)
+        while len(self._commit_cache) > self._CACHE_MAX:
+            self._commit_cache.popitem(last=False)  # drop least-recently-used
+        return val
+
     def _commit_cached(self, key, sha: str, fn):
-        """Memoise an immutable per-commit read. Bypassed for non-sha refs
-        (e.g. 'HEAD', short sha) whose content could change."""
+        """Memoise an immutable per-commit read through the shared LRU."""
         if len(sha) != 40:
             return fn()
-        hit = self._commit_cache.get(key)
+        hit = self._cache_get(key)
         if hit is not None:
             return hit
-        val = fn()
-        self._commit_cache[key] = val
-        if len(self._commit_cache) > 400:  # simple bounded FIFO trim
-            for k in list(self._commit_cache)[:100]:
-                del self._commit_cache[k]
-        return val
+        return self._cache_put(key, sha, fn())
 
     # ── low-level runner ─────────────────────────────────────────
     def _argv(self, args: list[str]) -> list[str]:
@@ -394,24 +418,20 @@ class CliGitBackend(GitBackend):
 
     # ── cancellable async reads (Info panel; kill the git process on abort) ──
     async def commit_files_async(self, sha: str) -> list[DiffFile]:
-        hit = self._commit_cache.get(("files", sha))
+        hit = self._cache_get(("files", sha))
         if hit is not None:
             return hit
         res = self._parse_commit_files(
             await self._text_async(["show", "--numstat", "--format=", sha]))
-        if len(sha) == 40:
-            self._commit_cache[("files", sha)] = res
-        return res
+        return self._cache_put(("files", sha), sha, res)
 
     async def commit_message_async(self, sha: str) -> str:
-        hit = self._commit_cache.get(("msg", sha))
+        hit = self._cache_get(("msg", sha))
         if hit is not None:
             return hit
         out = await self._text_async(
             ["log", "-1", f"--format={self._MSG_FMT}", "--date=short", sha])
-        if len(sha) == 40:
-            self._commit_cache[("msg", sha)] = out
-        return out
+        return self._cache_put(("msg", sha), sha, out)
 
     async def file_diff_async(self, path: str, *, staged: bool = False) -> str:
         return await self._text_async(self._file_diff_args(path, staged))
