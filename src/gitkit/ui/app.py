@@ -16,6 +16,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Header, Input, Label, ListItem, ListView, Static
 
@@ -39,6 +40,8 @@ WRITE_SUBCMDS = {"add", "reset", "checkout", "commit", "branch", "merge",
 # Info-panel timing: only fetch a row's details after the cursor dwells this long,
 # so fast scrolling doesn't fire/abort a subprocess per row.
 INFO_DEBOUNCE = 0.25  # seconds the cursor must rest before fetching Info
+TREE_PAGE = 80        # commits loaded per page (the Tree grows as you scroll down)
+TREE_PREFETCH = 15    # start loading the next page this many rows from the bottom
 
 
 def _fmt_cmd(args) -> str:
@@ -801,6 +804,15 @@ class GitkitApp(App):
         self._status_msg = "Ready"  # persistent status (Info 'loading…' overlays it)
         self._info_timer = None  # debounce timer for the Info panel
         self._info_worker = None  # in-flight Info fetch (cancelled when moving away)
+        # Tree pagination: the log is loaded a page at a time and grown as the
+        # cursor nears the bottom, so a repo with thousands of commits doesn't
+        # stall the initial load (and isn't capped at one page).
+        self._tree_limit = TREE_PAGE
+        self._tree_has_more = False    # the last log hit the limit → more may exist
+        self._loading_more = False     # a page load is in flight (don't stack them)
+        self._tree_width = 1           # graph column width of the rendered Tree
+        self._tree_remote_set = set()  # remote-reachable shas from the last full load
+        self._staged_count = 0         # staged files at the last full load
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -924,7 +936,10 @@ class GitkitApp(App):
         self._apply_load_data(self._fetch_load_data())
 
     def _fetch_load_data(self) -> dict:
-        """All git reads for a refresh — pure, runs in a worker thread."""
+        """All git reads for a refresh — pure, runs in a worker thread. A full
+        refresh resets the Tree to its first page (the cursor returns to the top
+        via select_first), so the paged limit is reset here too."""
+        self._tree_limit = TREE_PAGE
         be = self.be
         branch = be.current_branch()
         detached = branch is None
@@ -938,7 +953,7 @@ class GitkitApp(App):
             "unmerged": bool(be.unmerged_paths()),
             "local_branches": be.branches(),
             "remote_branches": be.remote_branches(),
-            "commits": be.log(limit=80, all_refs=self._all_refs),
+            "commits": be.log(limit=self._tree_limit, all_refs=self._all_refs),
             "remote_set": be.remote_reachable(),
         }
 
@@ -966,19 +981,78 @@ class GitkitApp(App):
         self._remote_names = {b.name for b in self._remote_branches}
 
         commits = d["commits"]
-        head_sha = next((c.sha for c in commits if "HEAD" in c.refs), None)
-        lines = self._gcache.render(commits, head_sha, d["remote_set"])
-        width = max((len(g) for g, _ in lines), default=1)
-        items = []
-        if staged:  # the mockup's synthetic "◌ N staged" node above HEAD
-            v = Text("◌ ", style="bright_yellow")
-            v.append(f"{len(staged)} staged — press c to commit", style="italic yellow")
-            items.append(VirtualItem(v))
-        items.extend(_commit_items(lines, width))
+        self._tree_remote_set = d["remote_set"]
+        self._staged_count = len(staged)
+        self._tree_has_more = len(commits) >= self._tree_limit
+        items, width = self._build_tree_items(commits, len(staged))
+        self._tree_width = width
         self._head_item = next(
             (it for it in items
              if isinstance(it, CommitItem) and "HEAD" in it.commit.refs), None)
         self._repopulate(self.query_one("#tree", ListView), items, select_first=True)
+
+    def _build_tree_items(self, commits, staged_count: int):
+        """Render the lane graph for `commits` into Tree rows. Returns
+        (items, graph_width). Pure-ish: only reads self._tree_remote_set/_gcache."""
+        head_sha = next((c.sha for c in commits if "HEAD" in c.refs), None)
+        lines = self._gcache.render(commits, head_sha, self._tree_remote_set)
+        width = max((len(g) for g, _ in lines), default=1)
+        items = []
+        if staged_count:  # the mockup's synthetic "◌ N staged" node above HEAD
+            v = Text("◌ ", style="bright_yellow")
+            v.append(f"{staged_count} staged — press c to commit", style="italic yellow")
+            items.append(VirtualItem(v))
+        items.extend(_commit_items(lines, width))
+        return items, width
+
+    # ── Tree pagination (grow the log as the cursor nears the bottom) ──
+    def _maybe_load_more(self, index) -> None:
+        """Called on every Tree highlight: when the cursor comes within
+        TREE_PREFETCH rows of the bottom and more commits may exist, load the
+        next page in the background and append it (cursor/scroll preserved)."""
+        if index is None or self._loading_more or not self._tree_has_more:
+            return
+        tree = self.query_one("#tree", ListView)
+        if index >= len(tree.children) - TREE_PREFETCH:
+            self._loading_more = True
+            self._tree_limit += TREE_PAGE
+            self.run_worker(self._load_more_async(), group="loadmore",
+                            exclusive=True, exit_on_error=False)
+
+    async def _load_more_async(self) -> None:
+        try:
+            limit = self._tree_limit
+            commits = await asyncio.to_thread(
+                lambda: self.be.log(limit=limit, all_refs=self._all_refs))
+            self._tree_has_more = len(commits) >= limit
+            # the staged set can't change while merely scrolling, so reuse the
+            # count from the last full load (no blocking git call on the loop).
+            items, width = self._build_tree_items(commits, self._staged_count)
+            tree = self.query_one("#tree", ListView)
+            shown = len(tree.children)
+            if width != self._tree_width or shown == 0 or shown > len(items):
+                # graph reflowed (or state changed under us) → rebuild, but keep
+                # the cursor where it was so a deep scroll doesn't jump to the top.
+                self._tree_width = width
+                keep = tree.index
+                self._head_item = next(
+                    (it for it in items
+                     if isinstance(it, CommitItem) and "HEAD" in it.commit.refs), None)
+                self._repopulate(tree, items)
+                if keep is not None:
+                    self.call_after_refresh(self._restore_tree_index, keep)
+            else:
+                # common case (esp. linear history): the first `shown` rows are
+                # unchanged — append only the freshly loaded tail.
+                for it in items[shown:]:
+                    tree.append(it)
+        finally:
+            self._loading_more = False
+
+    def _restore_tree_index(self, index: int) -> None:
+        tree = self.query_one("#tree", ListView)
+        if tree.children:
+            tree.index = min(index, len(tree.children) - 1)
 
     def _repopulate(self, listview: ListView, items, *, select_first=False) -> None:
         """Rebuild a ListView, awaiting clear() before appending. ListView.clear()
@@ -1065,7 +1139,8 @@ class GitkitApp(App):
 
     def _fire_info(self, fetch) -> None:
         self._info_worker = self.run_worker(
-            self._info_guard(fetch), exclusive=True, group="info")
+            self._info_guard(fetch), exclusive=True, group="info",
+            exit_on_error=False)
 
     async def _info_guard(self, fetch) -> None:
         try:
@@ -1073,9 +1148,14 @@ class GitkitApp(App):
             self._info_idle()
         except asyncio.CancelledError:
             raise  # superseded by a newer row — that fetch owns the status now
+        except NoMatches:
+            pass  # Info widgets gone (rebuild / teardown) — drop this update
         except BackendError as e:
-            self._info_msg(f"git error: {e}\n{getattr(e, 'stderr', '')}")
-            self._info_idle()
+            try:
+                self._info_msg(f"git error: {e}\n{getattr(e, 'stderr', '')}")
+                self._info_idle()
+            except NoMatches:
+                pass
 
     def _info_commit(self, c) -> None:
         glyph = "◆" if c.is_merge else "●"
@@ -1127,16 +1207,24 @@ class GitkitApp(App):
 
     # ── events ───────────────────────────────────────────────────
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        lv_id = event.list_view.id
-        item = event.item
-        if lv_id == "tree":
-            if isinstance(item, CommitItem):
-                self._info_commit(item.commit)
-            elif isinstance(item, VirtualItem):
-                self._info_staged()
-        elif lv_id in ("untracked", "modified", "staged") and isinstance(item, FileItem):
-            self._info_file(item.path, item.kind)
-            self._decorate_files(item)
+        # Highlights fire on EVERY cursor move — holding ↓ on a big repo floods
+        # this. A move can land while the Info widgets are mid-rebuild or the
+        # screen is being torn down, so a transiently-absent widget (NoMatches)
+        # must never crash the app; just skip that tick's Info update.
+        try:
+            lv_id = event.list_view.id
+            item = event.item
+            if lv_id == "tree":
+                if isinstance(item, CommitItem):
+                    self._info_commit(item.commit)
+                elif isinstance(item, VirtualItem):
+                    self._info_staged()
+                self._maybe_load_more(event.list_view.index)
+            elif lv_id in ("untracked", "modified", "staged") and isinstance(item, FileItem):
+                self._info_file(item.path, item.kind)
+                self._decorate_files(item)
+        except NoMatches:
+            pass
 
     def _decorate_files(self, current) -> None:
         for sel in ("#untracked", "#modified", "#staged"):
