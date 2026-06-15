@@ -89,6 +89,21 @@ HELP_TEXT = """[b]gitkit — keys[/b]
   r reload · ? help · s settings · q quit"""
 
 
+def _refill_listview(screen, lv: "ListView", items, first) -> None:
+    """Rebuild a ListView's items, AWAITING clear() before appending + setting the
+    index. ListView.clear() defers child removal, so a synchronous `lv.index = …`
+    lands against the stale (old) rows — the filter highlight then jumps to the
+    wrong option. Doing it in a worker after the clear fixes that."""
+    async def rebuild():
+        await lv.clear()
+        for it in items:
+            lv.append(it)
+        if first is not None and 0 <= first < len(items):
+            lv.index = first
+
+    screen.run_worker(rebuild(), exclusive=True, group=f"opts-{id(lv)}")
+
+
 def _append_graph(text: Text, graph: str) -> None:
     """Append a graph string, colouring each cell by its lane column."""
     for i, ch in enumerate(graph):
@@ -327,14 +342,10 @@ class SelectModal(ModalScreen):
         self.query_one("#filter", Input).focus()
 
     def _rebuild(self, q: str) -> None:
-        lv = self.query_one("#opts", ListView)
-        lv.clear()
         ql = q.lower()
-        for o in self._options:
-            if ql in o.lower():
-                lv.append(_OptItem(o))
-        if len(lv):
-            lv.index = 0
+        items = [_OptItem(o) for o in self._options if ql in o.lower()]
+        _refill_listview(self, self.query_one("#opts", ListView),
+                         items, 0 if items else None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self._rebuild(event.value)
@@ -384,29 +395,26 @@ class BranchesModal(ModalScreen):
         self.query_one("#filter", Input).focus()
 
     def _rebuild(self, q: str) -> None:
-        lv = self.query_one("#opts", ListView)
-        lv.clear()
         ql = q.lower()
-        first = None
+        items = []
+        first = None  # index of the first real branch (skip the section header)
 
-        def section(title, items, kind):
+        def section(title, rows, kind):
             nonlocal first
-            rows = [(n, d) for (n, d) in items if ql in n.lower()]
+            rows = [(n, d) for (n, d) in rows if ql in n.lower()]
             if not rows:
                 return
-            lv.append(_SectionItem(title))
+            items.append(_SectionItem(title))
             for n, d in rows:
-                opt = _BranchOpt(kind, n, d)
-                lv.append(opt)
+                items.append(_BranchOpt(kind, n, d))
                 if first is None:
-                    first = len(lv) - 1
+                    first = len(items) - 1
 
         section("Local", self._local, "local")
         section("Remote", self._remote, "remote")
         if first is None:
-            lv.append(ListItem(Label(Text("— 沒有符合的分支 —", style="dim"))))
-        else:
-            lv.index = first  # land on the first real branch, not a header
+            items.append(ListItem(Label(Text("— 沒有符合的分支 —", style="dim"))))
+        _refill_listview(self, self.query_one("#opts", ListView), items, first)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self._rebuild(event.value)
@@ -708,13 +716,15 @@ class OutputModal(ModalScreen):
 
 class GitkitApp(App):
     CSS = """
-    #main { height: 1fr; }
+    /* tree row (main) and Info box share vertically 3:2 so the tree isn't
+       squeezed by a fixed-height Info box on short terminals */
+    #main { height: 3fr; }
     #left { width: 30; }
     #center { width: 1fr; }
     #left ListView { border: round $primary; height: 1fr; }
     #tree { border: round $primary; height: 1fr; }
     CommitItem.head-flash { background: $warning 30%; }
-    #infobox { height: 16; border: round $primary; }
+    #infobox { height: 2fr; min-height: 8; border: round $primary; }
     #infohdr { height: 1; color: $accent; }
     #inforow { height: 1fr; }
     #difflist { width: 38; border-right: solid $primary; }
@@ -819,12 +829,16 @@ class GitkitApp(App):
         for wid, title in titles.items():
             self.query_one(f"#{wid}", ListView).border_title = title
         self.query_one("#infobox").border_title = "Info"
-        self._reload_sync()  # first paint is synchronous for a deterministic start
         self.query_one("#tree", ListView).focus()
         self.set_interval(0.7, self._blink_head)  # flash the HEAD row
         self._cmd_queue = asyncio.Queue()        # serial git-command queue
         self.run_worker(self._cmd_consumer())    # the single consumer
         self.run_worker(self._start_askpass())  # git auth prompts → TUI popup
+        # initial tree load is a foreground op (ProgressModal), like the other
+        # tree-modifying commands; _exec_cmd does the actual load via _reload_now
+        async def _initial():
+            return "Ready"
+        self._enqueue(_initial, "載入 repo", modal=True, cancellable=False)
 
     # ── git credential prompts → TUI (GIT_ASKPASS relay) ─────────
     async def _start_askpass(self) -> None:
@@ -905,14 +919,6 @@ class GitkitApp(App):
         self._apply_load_data(data)
         if ready:
             self._set_status("Ready")
-
-    def _reload_sync(self) -> None:
-        """Blocking load — used for the very first paint (deterministic startup)."""
-        try:
-            self._load()
-            self._set_status("Ready")
-        except BackendError as e:
-            self._set_status(f"git error: {e}")
 
     def _load(self) -> None:
         self._apply_load_data(self._fetch_load_data())
