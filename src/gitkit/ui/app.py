@@ -438,6 +438,30 @@ class ConfirmModal(ModalScreen):
         self.dismiss(False)
 
 
+class ProgressModal(ModalScreen):
+    """Shown while a network op (fetch / pull / push) runs. The app dismisses it
+    when the backend op finishes; Esc dismisses with 'cancel' so the caller can
+    abort the op (which kills the whole git process tree)."""
+
+    BINDINGS = [("escape", "cancel", "cancel")]
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        body = Text()
+        body.append("⟳ ", style="bold yellow")
+        body.append(self._message + "\n\n", style="bold")
+        body.append("執行中,請稍候…    ", style="dim")
+        body.append(" Esc ", style="bold black on grey70")
+        body.append(" 取消", style="dim")
+        yield Static(body, id="modalbox")
+
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
+
+
 class StalenessModal(ModalScreen):
     """Warns that a branch is behind / diverged from its upstream before a write
     op (merge / push / pull). Built dynamically: `actions` is a list of
@@ -712,6 +736,7 @@ class GitkitApp(App):
         self._cmdhistory = []  # (cmd_str, result, is_error) of recent write actions
         self._flow_busy = False  # a write is running in a worker (guards re-entry)
         self._flow_worker = None  # the running write worker (Esc cancels → kills git)
+        self._progress = None  # ProgressModal shown during a network op
         self._status_msg = "Ready"  # persistent status (Info 'loading…' overlays it)
         self._info_timer = None  # debounce timer for the Info panel
         self._info_worker = None  # in-flight Info fetch (cancelled when moving away)
@@ -996,10 +1021,6 @@ class GitkitApp(App):
             self._info_worker = None
 
     def action_diff_back(self) -> None:
-        # while a cancellable network write runs, Esc aborts it (kills the git proc)
-        if self._flow_busy and self._flow_worker is not None:
-            self._flow_worker.cancel()
-            return
         self.query_one("#tree", ListView).focus()
 
     # ── events ───────────────────────────────────────────────────
@@ -1131,8 +1152,36 @@ class GitkitApp(App):
             return
         self._flow_busy = True
         cancellable = asyncio.iscoroutinefunction(fn)
-        self._set_status("執行中…(Esc 取消)" if cancellable else "執行中…")
+        if cancellable:  # network op → show a progress popup (Esc cancels)
+            self._set_status("執行中…")
+            self._progress = ProgressModal(f"正在 {self._flow_label(fn, args)} …")
+            self.push_screen(self._progress, self._on_progress_dismiss)
+        else:
+            self._set_status("執行中…")
         self._flow_worker = self.run_worker(self._run_flow_async(fn, args), group="flow")
+
+    @staticmethod
+    def _flow_label(fn, args) -> str:
+        names = {"fetch": "fetch", "pull": "pull", "push": "push",
+                 "update_then_merge": "更新並合併", "update_then_push": "更新後 push"}
+        label = names.get(getattr(fn, "__name__", ""), "remote 操作")
+        target = args[0] if args else ""
+        return f"{label} {target}".strip()
+
+    def _on_progress_dismiss(self, result) -> None:
+        # the modal closed: by the app (op done) or by Esc ('cancel' → abort op)
+        self._progress = None
+        if result == "cancel" and self._flow_worker is not None:
+            self._flow_worker.cancel()  # → CancelledError → kill git tree
+
+    def _dismiss_progress(self) -> None:
+        p = self._progress
+        self._progress = None  # clear first so the dismiss callback is a no-op
+        if p is not None:
+            try:
+                p.dismiss(None)
+            except Exception:
+                pass
 
     async def _run_flow_async(self, fn, args) -> None:
         self.be.cmdlog.clear()
@@ -1145,11 +1194,13 @@ class GitkitApp(App):
         except FlowError as e:
             msg, err = None, str(e)
         except asyncio.CancelledError:
+            self._dismiss_progress()
             self._set_status("已中止操作(git 已停止)")
             self._begin_reload()
             raise
         finally:
             self._flow_busy = False
+        self._dismiss_progress()  # backend done → notify front-end: close the popup
         # WRITE_SUBCMDS filter isolates this write's commands even if a background
         # reload appended reads to the shared cmdlog meanwhile.
         cmds = [c for c in self.be.cmdlog if c and c[0] in WRITE_SUBCMDS]
