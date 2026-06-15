@@ -1116,6 +1116,11 @@ class GitkitApp(App):
         self._tree_click_chain = None
         w = event.widget
         while w is not None:
+            if isinstance(w, DiffFileItem):
+                # single click on an Info file opens its diff immediately — no
+                # focus-then-select two-step (which felt like a double-click)
+                self._open_diff_item(w)
+                return
             if getattr(w, "id", None) == "tree":
                 self._tree_click_chain = event.chain
                 break
