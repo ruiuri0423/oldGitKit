@@ -720,8 +720,10 @@ class GitkitApp(App):
     #difflist { width: 38; border-right: solid $primary; }
     #diffview { width: 1fr; }
     #difftext { width: auto; }
-    #untracked:focus, #modified:focus, #staged:focus, #tree:focus,
-    #difflist:focus { border: round $accent; }
+    #untracked:focus, #modified:focus, #staged:focus, #tree:focus { border: round $accent; }
+    /* the diff file-list only has a right separator; on focus just recolour it,
+       don't add a full box (that inset jump felt jarring) */
+    #difflist:focus { border-right: solid $accent; }
     #infobox:focus-within { border: round $accent; }
     #statusbar { height: 1; background: $panel; color: $text-muted; padding: 0 1; }
     ModalScreen { align: center middle; }
