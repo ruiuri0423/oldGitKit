@@ -44,6 +44,24 @@ class CliGitBackend(GitBackend):
         # every invocation's args (without the boilerplate prefix) are recorded
         # here so the UI can surface the actual git command that ran
         self.cmdlog: list[list[str]] = []
+        # content of a concrete commit (by 40-hex sha) never changes, so it is
+        # safe to memoise forever — makes re-visiting commits while scrolling free
+        self._commit_cache: dict = {}
+
+    def _commit_cached(self, key, sha: str, fn):
+        """Memoise an immutable per-commit read. Bypassed for non-sha refs
+        (e.g. 'HEAD', short sha) whose content could change."""
+        if len(sha) != 40:
+            return fn()
+        hit = self._commit_cache.get(key)
+        if hit is not None:
+            return hit
+        val = fn()
+        self._commit_cache[key] = val
+        if len(self._commit_cache) > 400:  # simple bounded FIFO trim
+            for k in list(self._commit_cache)[:100]:
+                del self._commit_cache[k]
+        return val
 
     # ── low-level runner ─────────────────────────────────────────
     def _argv(self, args: list[str]) -> list[str]:
@@ -233,9 +251,13 @@ class CliGitBackend(GitBackend):
         return self._text(args)
 
     def show_text(self, sha: str) -> str:
-        return self._text(["show", "--no-color", sha])
+        return self._commit_cached(
+            ("show", sha), sha, lambda: self._text(["show", "--no-color", sha]))
 
     def commit_files(self, sha: str) -> list[DiffFile]:
+        return self._commit_cached(("files", sha), sha, lambda: self._commit_files(sha))
+
+    def _commit_files(self, sha: str) -> list[DiffFile]:
         # `--format=` drops the commit header so only numstat lines remain
         out = self._text(["show", "--numstat", "--format=", sha])
         result: list[DiffFile] = []
@@ -251,10 +273,14 @@ class CliGitBackend(GitBackend):
         return result
 
     def commit_file_diff(self, sha: str, path: str) -> str:
-        return self._text(["show", "--no-color", sha, "--", path])
+        return self._commit_cached(
+            ("fdiff", sha, path), sha,
+            lambda: self._text(["show", "--no-color", sha, "--", path]))
 
     def commit_message(self, sha: str) -> str:
-        return self._text(["log", "-1", "--format=%an  %ad%n%n%B", "--date=short", sha])
+        return self._commit_cached(
+            ("msg", sha), sha,
+            lambda: self._text(["log", "-1", "--format=%an  %ad%n%n%B", "--date=short", sha]))
 
     def file_diff(self, path: str, *, staged: bool = False) -> str:
         args = ["diff", "--no-color"]
