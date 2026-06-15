@@ -17,7 +17,10 @@ import subprocess
 import tempfile
 import unittest
 
-from gitkit.ui.app import GitkitApp, ProgressModal
+try:  # the git-1.8.3.1 CI job tests backend/core/graph only — no Textual there
+    from gitkit.ui.app import GitkitApp, ProgressModal
+except ImportError as e:
+    raise unittest.SkipTest(f"Textual not installed (UI tests skipped): {e}")
 
 
 def _git(d, *a):
