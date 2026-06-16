@@ -81,11 +81,25 @@ class TestStrings(unittest.TestCase):
         s = _conn_string(_lanes(0), frozenset({(1, 0), (2, 0)}), 3, G)
         self.assertEqual(s, "├─┴─╯")
 
+    def test_node_colors_by_column(self):
+        s, color = _node_string(_lanes(0, 1), 1, True, True, 2, G, colors=True)
+        self.assertEqual(s, "│ ◆")
+        self.assertEqual(color[0], 0)   # lane on col0
+        self.assertEqual(color[2], 1)   # merge node on col1
+
+    def test_conn_whole_edge_is_one_colour(self):
+        # a cross-column edge must read as ONE colour (its source lane), not be
+        # repainted per column it passes through
+        s, color = _conn_string(_lanes(0, 1), frozenset({(0, 2)}), 3, G, colors=True)
+        self.assertEqual(s, "├─┼─╮")  # crosses lane 1 as ┼
+        self.assertEqual([color[i] for i, ch in enumerate(s) if ch != " "],
+                         [0, 0, 0, 0, 0])  # whole edge (incl. the crossing) = lane 0
+
 
 class TestRenderAndCache(unittest.TestCase):
     def test_render_has_one_node_per_commit(self):
         lines = render_graph(DIAMOND, head_sha="M")
-        nodes = [c for _, c in lines if c is not None]
+        nodes = [c for _, _, c in lines if c is not None]
         self.assertEqual([c.sha for c in nodes], ["M", "A", "B", "base"])
 
     def test_cache_reuses_and_matches(self):
@@ -95,14 +109,14 @@ class TestRenderAndCache(unittest.TestCase):
         self.assertIs(first, again)  # identical signature -> same object (full hit)
         # per-row strings match a fresh render
         fresh = render_graph(DIAMOND, head_sha="M")
-        self.assertEqual([g for g, _ in first], [g for g, _ in fresh])
+        self.assertEqual([g for g, _, _ in first], [g for g, _, _ in fresh])
 
     def test_cache_rerenders_on_change(self):
         cache = GraphCache()
         cache.render(DIAMOND, "M")
         extended = [commit("N", ["M"])] + DIAMOND  # a new top commit
         out = cache.render(extended, "N")
-        self.assertEqual([c.sha for _, c in out if c is not None],
+        self.assertEqual([c.sha for _, _, c in out if c is not None],
                          ["N", "M", "A", "B", "base"])
 
 

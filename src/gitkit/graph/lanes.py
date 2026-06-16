@@ -223,22 +223,28 @@ G = {"node": NODE, "merge": MERGE, "vline": VLINE,
      "hnode": NODE_HOLLOW, "hmerge": MERGE_HOLLOW, "dvline": DVLINE}
 
 
-def _node_string(lanes, col, is_merge, node_remote, width, g):
+def _node_string(lanes, col, is_merge, node_remote, width, g, *, colors=False):
     cells = [" "] * (2 * width - 1)
+    color = [-1] * (2 * width - 1)  # per-cell colour = owning lane's column
     for x, dashed in lanes:
         cells[2 * x] = g["dvline"] if dashed else g["vline"]
+        color[2 * x] = x
     if is_merge:
         cells[2 * col] = g["merge"] if node_remote else g["hmerge"]
     else:
         cells[2 * col] = g["node"] if node_remote else g["hnode"]
-    return "".join(cells).rstrip()
+    color[2 * col] = col
+    s = "".join(cells).rstrip()
+    return (s, color) if colors else s
 
 
-def _conn_string(both, moves, width, g):
+def _conn_string(both, moves, width, g, *, colors=False):
     mask = [0] * (2 * width - 1)
+    color = [-1] * (2 * width - 1)
     dashed_at = set()
     for cc, dashed in both:
         mask[2 * cc] |= _U | _D  # lane passing straight through
+        color[2 * cc] = cc       # straight lane → its own column's colour
         if dashed:
             dashed_at.add(2 * cc)
     for f, t in moves:
@@ -249,13 +255,16 @@ def _conn_string(both, moves, width, g):
             mask[i] |= _L | _R  # horizontal run (crosses lanes as ┼)
         mask[2 * f] |= _U  # from-side links up (to the node/branch above)
         mask[2 * t] |= _D  # to-side links down (into the lane below)
+        for i in range(2 * lo, 2 * hi + 1):  # whole edge → ONE colour (its source
+            color[i] = f                      # lane f), so it reads as a single line
     out = []
     for i, m in enumerate(mask):
         gl = _GLYPH.get(m, " ")
         if gl == VLINE and i in dashed_at:  # only pure straight lanes go dashed
             gl = g["dvline"]
         out.append(gl)
-    return "".join(out).rstrip()
+    s = "".join(out).rstrip()
+    return (s, color) if colors else s
 
 
 def _specs(commits: List[Commit], head_sha: Optional[str], remote_set):
@@ -321,17 +330,17 @@ def render_graph(commits: List[Commit], *, head_sha: Optional[str] = None,
     for kind, key, c in specs:
         ck = (kind, key)
         if cache is not None and ck in cache:
-            s = cache[ck]
+            s, color = cache[ck]
         else:
             if kind == "n":
                 lanes, col, ismerge, nrem, w = key
-                s = _node_string(lanes, col, ismerge, nrem, w, g)
+                s, color = _node_string(lanes, col, ismerge, nrem, w, g, colors=True)
             else:
                 both, m, w = key
-                s = _conn_string(both, m, w, g)
+                s, color = _conn_string(both, m, w, g, colors=True)
             if cache is not None:
-                cache[ck] = s
-        out.append((s, c))
+                cache[ck] = (s, color)
+        out.append((s, color, c))
     return out
 
 
