@@ -107,17 +107,17 @@ def _refill_listview(screen, lv: "ListView", items, first) -> None:
     screen.run_worker(rebuild(), exclusive=True, group=f"opts-{id(lv)}")
 
 
-def _append_graph(text: Text, graph: str, color=None) -> None:
-    """Append a graph string. Each cell is coloured by `color[i]` — the column of
-    the lane/edge that owns it — so a cross-column edge reads as ONE colour end to
-    end (a whole edge = its source lane's colour). Falls back to position colouring
-    when no colour map is supplied."""
+def _append_graph(text: Text, graph: str) -> None:
+    """Append a graph string, colouring each cell by its lane column. A branch
+    keeps one column the whole way down, so its lane is one consistent colour;
+    a cross-column edge crosses lanes as a straight ─ (see lanes._GLYPH), so it
+    still reads as one continuous horizontal line even though its cells take the
+    colour of whichever column they sit in."""
     for i, ch in enumerate(graph):
         if ch == " ":
             text.append(" ")
-            continue
-        ci = color[i] if (color is not None and i < len(color) and color[i] >= 0) else i // 2
-        text.append(ch, style=LANE_COLORS[ci % len(LANE_COLORS)])
+        else:
+            text.append(ch, style=LANE_COLORS[(i // 2) % len(LANE_COLORS)])
 
 
 def _render_conflict(text: str, *, limit: int = 500) -> Text:
@@ -241,13 +241,13 @@ def _commit_items(lines, width) -> List[CommitItem]:
         if cur is not None and cur_commit is not None:
             items.append(CommitItem(cur_commit, cur))
 
-    for graph, color, c in lines:
+    for graph, c in lines:
         if c is not None:
             flush()
             # Tree rows carry only SHA + branch names; subject lives in Info
             # row: graph  sha  [HEAD] [b1] [b2]  user  subject
             cur = Text(no_wrap=True, overflow="ellipsis")
-            _append_graph(cur, graph.ljust(width), color)
+            _append_graph(cur, graph.ljust(width))
             cur.append("  ")
             cur.append(c.short_sha, style=MERGE_STYLE if c.is_merge else SHA_STYLE)
             if "HEAD" in c.refs:
@@ -265,7 +265,7 @@ def _commit_items(lines, width) -> List[CommitItem]:
         else:
             if cur is not None:
                 cur.append("\n")
-                _append_graph(cur, graph, color)
+                _append_graph(cur, graph)
     flush()
     return items
 
@@ -1046,7 +1046,7 @@ class GitkitApp(App):
         (items, graph_width). Pure-ish: only reads self._tree_remote_set/_gcache."""
         head_sha = next((c.sha for c in commits if "HEAD" in c.refs), None)
         lines = self._gcache.render(commits, head_sha, self._tree_remote_set)
-        width = max((len(g) for g, _c, _ in lines), default=1)
+        width = max((len(g) for g, _ in lines), default=1)
         items = []
         if staged_count:  # the mockup's synthetic "◌ N staged" node above HEAD
             v = Text("◌ ", style="bright_yellow")
