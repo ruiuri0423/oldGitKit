@@ -11,8 +11,12 @@ New model (replaces the old greedy renderer):
   3. Render row by row. Lanes never shift mid-flight (columns are fixed), so the
      only diagonals are spawn (at a merge) and converge (at a fork point).
 
-This is a first cut to eyeball in Textual — connectors are single-row (multi-row
-staircase for far cross-column edges comes later). See docs/ui/.
+Connectors are single-row. Each edge is coloured as ONE continuous line (its
+source lane's colour, including the ┼ crossings) so it stays followable across
+lanes — see _conn_string(colors=) and ui._append_graph. A multi-row *staircase*
+for far cross-column edges is intentionally deferred: it would route an edge
+through shifting columns, which conflicts with the fixed-lane premise; whole-edge
+colouring already covers the readability it aimed at. See docs/ui/.
 """
 from __future__ import annotations
 
