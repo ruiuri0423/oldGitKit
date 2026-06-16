@@ -73,19 +73,42 @@ class TestStrings(unittest.TestCase):
     def test_conn_adjacent_spawn(self):
         self.assertEqual(_conn_string(_lanes(0), frozenset({(0, 1)}), 2, G), "├─╮")
 
-    def test_conn_cross_column_is_continuous(self):
+    def test_conn_cross_column_uses_straight_line(self):
+        # a cross-column edge passes OVER the lane it crosses as ─ (not ┼), so it
+        # reads as one continuous horizontal line
         s = _conn_string(_lanes(0, 1), frozenset({(0, 2)}), 3, G)
-        self.assertEqual(s, "├─┼─╮")
+        self.assertEqual(s, "├───╮")
 
     def test_conn_double_converge(self):
         s = _conn_string(_lanes(0), frozenset({(1, 0), (2, 0)}), 3, G)
         self.assertEqual(s, "├─┴─╯")
 
+    def test_node_colour_by_column(self):
+        s, color = _node_string(_lanes(0, 1), 1, True, True, 2, G, colors=True)
+        self.assertEqual(s, "│ ◆")
+        self.assertEqual(color[0], 0)   # lane on col0
+        self.assertEqual(color[2], 1)   # merge node on col1
+
+    def test_edge_colour_is_side_branch_trunk_corner_stays(self):
+        # converge col1 → col0: the whole line is the SIDE branch's colour (col1),
+        # only the corner joining the trunk keeps the trunk's colour (col0)
+        s, color = _conn_string(_lanes(0), frozenset({(1, 0)}), 2, G, colors=True)
+        self.assertEqual(s, "├─╯")
+        self.assertEqual([color[i] for i in range(len(s))], [0, 1, 1])
+
+    def test_edge_colour_cross_column_one_side_colour(self):
+        # spawn col0 → col2 crossing lane 1: ├ = trunk(0), the rest of the edge =
+        # the side branch (2) as one colour, incl. the ─ over the crossed lane
+        s, color = _conn_string(_lanes(0, 1), frozenset({(0, 2)}), 3, G, colors=True)
+        self.assertEqual(s, "├───╮")
+        self.assertEqual([color[i] for i, ch in enumerate(s) if ch != " "],
+                         [0, 2, 2, 2, 2])
+
 
 class TestRenderAndCache(unittest.TestCase):
     def test_render_has_one_node_per_commit(self):
         lines = render_graph(DIAMOND, head_sha="M")
-        nodes = [c for _, c in lines if c is not None]
+        nodes = [c for _, _, c in lines if c is not None]
         self.assertEqual([c.sha for c in nodes], ["M", "A", "B", "base"])
 
     def test_cache_reuses_and_matches(self):
@@ -95,14 +118,14 @@ class TestRenderAndCache(unittest.TestCase):
         self.assertIs(first, again)  # identical signature -> same object (full hit)
         # per-row strings match a fresh render
         fresh = render_graph(DIAMOND, head_sha="M")
-        self.assertEqual([g for g, _ in first], [g for g, _ in fresh])
+        self.assertEqual([g for g, _, _ in first], [g for g, _, _ in fresh])
 
     def test_cache_rerenders_on_change(self):
         cache = GraphCache()
         cache.render(DIAMOND, "M")
         extended = [commit("N", ["M"])] + DIAMOND  # a new top commit
         out = cache.render(extended, "N")
-        self.assertEqual([c.sha for _, c in out if c is not None],
+        self.assertEqual([c.sha for _, _, c in out if c is not None],
                          ["N", "M", "A", "B", "base"])
 
 

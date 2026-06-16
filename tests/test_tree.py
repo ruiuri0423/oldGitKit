@@ -128,5 +128,48 @@ class TreePaginationCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(getattr(tree.highlighted_child, "sha", None), sha)
 
 
+class HeadFlashCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="gitkit_hf_")
+        subprocess.run(["git", "init", "-q", self.d], check=True)
+        _git(self.d, "config", "user.email", "t@e.co")
+        _git(self.d, "config", "user.name", "T")
+        for i in range(3):
+            with open(os.path.join(self.d, "f.txt"), "w") as f:
+                f.write(f"v{i}\n")
+            _git(self.d, "add", "-A")
+            _git(self.d, "commit", "-qm", f"c{i}")
+        c0 = subprocess.run(["git", "-C", self.d, "rev-list", "--max-parents=0", "HEAD"],
+                            capture_output=True, text=True).stdout.strip()
+        _git(self.d, "branch", "b1", c0)  # older commit → checkout moves HEAD only
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    async def test_checkout_clears_stale_head_flash(self):
+        # the in-place reload (checkout only moves the HEAD label) must not leave
+        # the previous HEAD row stuck with the blink highlight class
+        from gitkit.ui.app import CommitItem
+        app = GitkitApp(self.d)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(app, pilot)
+            tree = app.query_one("#tree", ListView)
+            tree.focus()
+            for _ in range(20):
+                await pilot.pause(0.03)
+            head = next(c for c in tree.children
+                        if isinstance(c, CommitItem) and "HEAD" in c.commit.refs)
+            old_sha = head.sha
+            head.add_class("head-flash")            # pretend mid-blink (bg showing)
+            app._run_flow(app.flow.checkout, "b1")  # HEAD → oldest; same commit set
+            await _settle(app, pilot)
+            for _ in range(20):
+                await pilot.pause(0.03)
+            old_row = next(c for c in tree.children
+                           if isinstance(c, CommitItem) and c.sha == old_sha)
+            self.assertNotIn("HEAD", old_row.commit.refs)        # HEAD really moved
+            self.assertFalse(old_row.has_class("head-flash"))    # stale bg cleared
+
+
 if __name__ == "__main__":
     unittest.main()

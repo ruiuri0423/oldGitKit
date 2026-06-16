@@ -11,8 +11,15 @@ New model (replaces the old greedy renderer):
   3. Render row by row. Lanes never shift mid-flight (columns are fixed), so the
      only diagonals are spawn (at a merge) and converge (at a fork point).
 
-This is a first cut to eyeball in Textual — connectors are single-row (multi-row
-staircase for far cross-column edges comes later). See docs/ui/.
+Connectors are single-row. Lanes keep a per-column colour (a branch holds one
+column all the way down → one consistent colour). Where a horizontal edge crosses
+a vertical lane it is drawn as a straight ─ OVER the lane (see _GLYPH), not a busy
+┼, and the whole edge takes ONE colour — the side branch it belongs to (the column
+further from the trunk), with only the corner joining the trunk left trunk-colour.
+So a merge/fork line reads as one same-colour line back to its ├ on the trunk. A
+multi-row *staircase* for far cross-column edges is intentionally deferred: it
+would route an edge through shifting columns, conflicting with the fixed-lane
+premise. See docs/ui/.
 """
 from __future__ import annotations
 
@@ -27,12 +34,17 @@ VLINE = "│"
 
 # connection-mask box-drawing: each connector cell records which of up/down/
 # left/right it links to, then maps to a continuous line glyph (no \ / breaks).
+# A pure 4-way cell is a horizontal EDGE crossing a vertical LANE (the only way
+# all four bits set) — we render it as a straight ─ so the edge reads as one
+# clean horizontal line passing OVER the lanes, instead of a busy ┼ that blurs
+# edge and lane together. (Lane colouring stays per-column, so the lanes above
+# and below keep their colour and the eye bridges the one-cell gap.)
 _U, _D, _L, _R = 1, 2, 4, 8
 _GLYPH = {
     0: " ", _U | _D: "│", _L | _R: "─",
     _D | _R: "╭", _D | _L: "╮", _U | _R: "╰", _U | _L: "╯",
     _U | _D | _R: "├", _U | _D | _L: "┤", _D | _L | _R: "┬",
-    _U | _L | _R: "┴", _U | _D | _L | _R: "┼",
+    _U | _L | _R: "┴", _U | _D | _L | _R: "─",  # edge crosses lane → ─ over it
     _U: "│", _D: "│", _L: "─", _R: "─",  # lone stubs fall back to a line
 }
 
@@ -223,22 +235,28 @@ G = {"node": NODE, "merge": MERGE, "vline": VLINE,
      "hnode": NODE_HOLLOW, "hmerge": MERGE_HOLLOW, "dvline": DVLINE}
 
 
-def _node_string(lanes, col, is_merge, node_remote, width, g):
+def _node_string(lanes, col, is_merge, node_remote, width, g, *, colors=False):
     cells = [" "] * (2 * width - 1)
+    color = [-1] * (2 * width - 1)  # per-cell colour = the lane/node's column
     for x, dashed in lanes:
         cells[2 * x] = g["dvline"] if dashed else g["vline"]
+        color[2 * x] = x
     if is_merge:
         cells[2 * col] = g["merge"] if node_remote else g["hmerge"]
     else:
         cells[2 * col] = g["node"] if node_remote else g["hnode"]
-    return "".join(cells).rstrip()
+    color[2 * col] = col
+    s = "".join(cells).rstrip()
+    return (s, color) if colors else s
 
 
-def _conn_string(both, moves, width, g):
+def _conn_string(both, moves, width, g, *, colors=False):
     mask = [0] * (2 * width - 1)
+    color = [-1] * (2 * width - 1)
     dashed_at = set()
     for cc, dashed in both:
         mask[2 * cc] |= _U | _D  # lane passing straight through
+        color[2 * cc] = cc       # straight lane → its own column's colour
         if dashed:
             dashed_at.add(2 * cc)
     for f, t in moves:
@@ -246,16 +264,23 @@ def _conn_string(both, moves, width, g):
         mask[2 * lo] |= _R
         mask[2 * hi] |= _L
         for i in range(2 * lo + 1, 2 * hi):
-            mask[i] |= _L | _R  # horizontal run (crosses lanes as ┼)
+            mask[i] |= _L | _R  # horizontal run (crosses lanes; ┼ → ─, see _GLYPH)
         mask[2 * f] |= _U  # from-side links up (to the node/branch above)
         mask[2 * t] |= _D  # to-side links down (into the lane below)
+        # The edge is ONE branch's line: colour the whole run by the side branch
+        # (hi, the column further from the trunk), EXCEPT the corner where it joins
+        # the trunk-ward lane (lo) — that stays the trunk lane's colour.
+        for i in range(2 * lo, 2 * hi + 1):
+            color[i] = hi
+        color[2 * lo] = lo
     out = []
     for i, m in enumerate(mask):
         gl = _GLYPH.get(m, " ")
         if gl == VLINE and i in dashed_at:  # only pure straight lanes go dashed
             gl = g["dvline"]
         out.append(gl)
-    return "".join(out).rstrip()
+    s = "".join(out).rstrip()
+    return (s, color) if colors else s
 
 
 def _specs(commits: List[Commit], head_sha: Optional[str], remote_set):
@@ -321,17 +346,17 @@ def render_graph(commits: List[Commit], *, head_sha: Optional[str] = None,
     for kind, key, c in specs:
         ck = (kind, key)
         if cache is not None and ck in cache:
-            s = cache[ck]
+            s, color = cache[ck]
         else:
             if kind == "n":
                 lanes, col, ismerge, nrem, w = key
-                s = _node_string(lanes, col, ismerge, nrem, w, g)
+                s, color = _node_string(lanes, col, ismerge, nrem, w, g, colors=True)
             else:
                 both, m, w = key
-                s = _conn_string(both, m, w, g)
+                s, color = _conn_string(both, m, w, g, colors=True)
             if cache is not None:
-                cache[ck] = s
-        out.append((s, c))
+                cache[ck] = (s, color)
+        out.append((s, color, c))
     return out
 
 
