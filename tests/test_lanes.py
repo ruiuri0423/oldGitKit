@@ -57,6 +57,19 @@ class TestDecompose(unittest.TestCase):
             self.assertEqual(branches[branch_of["M"]].column, 0)   # M,A,base trunk
             self.assertEqual(branches[branch_of["B"]].column, 1)   # side branch
 
+    def test_rootless_branch_goes_right_not_left(self):
+        # a branch whose root/fork is outside the loaded window (parent "off" not in
+        # the set) has no link to the trunk → it must sit to the RIGHT of the trunk,
+        # not crowd against col0 where it'd look like part of the trunk
+        commits = [
+            commit("A", ["base"]),   # trunk tip
+            commit("base", []),      # the root → trunk = col0
+            commit("X", ["off"]),    # X's parent isn't loaded → rootless / floating
+        ]
+        branches, branch_of, _ = build_layout(commits, head_sha="A")
+        self.assertEqual(branches[branch_of["base"]].column, 0)        # trunk col0
+        self.assertGreater(branches[branch_of["X"]].column, 0)         # rootless → right
+
 
 class TestStrings(unittest.TestCase):
     def test_node_string(self):

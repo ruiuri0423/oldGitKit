@@ -189,19 +189,21 @@ def _assign_columns(branches: Dict[int, Branch], primary: int):
         still = []
         for bid in remaining:
             b = branches[bid]
-            if b.basis_branch is None:
-                place(b, 0)
-                assigned.add(bid)
-                progress = True
-            elif b.basis_branch in assigned:
+            if b.basis_branch in assigned:   # only branches that link to the trunk
                 place(b, branches[b.basis_branch].column + 1)
                 assigned.add(bid)
                 progress = True
             else:
                 still.append(bid)
         remaining = still
-    for bid in remaining:  # leftovers (cycles / odd data)
-        place(branches[bid], 0)
+    # Whatever is left has no clean link to the trunk: a ROOTLESS branch (its root /
+    # fork point is outside the loaded window — common while paging) or cyclic/odd
+    # data. Place it to the RIGHT of every connected branch, not crowded against
+    # col0 where it looks like part of the trunk. (Still interval-scheduled among
+    # themselves, so disjoint ones share a column.)
+    right = len(occ)
+    for bid in remaining:
+        place(branches[bid], right)
 
 
 def build_layout(commits: List[Commit], head_sha: Optional[str] = None):
