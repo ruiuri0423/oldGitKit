@@ -68,6 +68,17 @@ class WriteCase(unittest.TestCase):
         self.flow.unstage(["b.txt"])
         self.assertTrue(self._status()["b.txt"].is_untracked)
 
+    def test_stage_chunks_many_paths(self):
+        # batch staging more paths than fit one command line must still work
+        paths = [f"m{i:04d}.txt" for i in range(self.be._PATH_CHUNK + 120)]
+        for p in paths:
+            _write(self.d, p, "x\n")
+        self.be.stage(paths)            # > _PATH_CHUNK → split into several adds
+        staged = {f.path for f in self.be.status() if f.is_staged}
+        self.assertTrue(set(paths) <= staged)
+        self.be.unstage(paths)          # chunked too
+        self.assertFalse({f.path for f in self.be.status() if f.is_staged})
+
     def test_discard_restores_file(self):
         _write(self.d, "a.txt", "changed\n")
         self.assertTrue(self._status()["a.txt"].is_unstaged)

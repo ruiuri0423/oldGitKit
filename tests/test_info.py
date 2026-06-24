@@ -10,7 +10,7 @@ import unittest
 try:  # the git-1.8.3.1 CI job tests backend/core/graph only — no Textual there
     import gitkit.ui.app as appmod
     from gitkit.ui.app import (GitkitApp, DiffFileItem, _PageNavItem,
-                               FileSearchModal)
+                               FileSearchModal, BatchFileModal)
     from textual.widgets import ListView
 except ImportError as e:
     raise unittest.SkipTest(f"Textual not installed (UI tests skipped): {e}")
@@ -114,6 +114,46 @@ class InfoPagingCase(unittest.IsolatedAsyncioTestCase):
             hl = lv.highlighted_child
             self.assertIsInstance(hl, DiffFileItem)
             self.assertEqual(hl.path, target)
+
+
+class BatchCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="gitkit_batch_")
+        subprocess.run(["git", "init", "-q", self.d], check=True)
+        _git(self.d, "config", "user.email", "t@e.co")
+        _git(self.d, "config", "user.name", "T")
+        with open(os.path.join(self.d, "README.md"), "w") as f:
+            f.write("x\n")
+        _git(self.d, "add", "-A")
+        _git(self.d, "commit", "-qm", "init")
+        self.files = [f"u{i}.txt" for i in range(5)]   # untracked
+        for fn in self.files:
+            with open(os.path.join(self.d, fn), "w") as f:
+                f.write("new\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    async def test_batch_stage_via_popup(self):
+        app = GitkitApp(self.d)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(app, pilot)
+            for _ in range(20):
+                await pilot.pause(0.03)
+            app.query_one("#untracked", ListView).focus()
+            await pilot.pause(0.05)
+            app.action_search_files()                 # "/" on a staging panel
+            await pilot.pause(0.2)
+            self.assertIsInstance(app.screen, BatchFileModal)
+            app.screen.action_select_all()            # 全選
+            await pilot.pause(0.1)
+            self.assertEqual(len(app.screen._selected), len(self.files))
+            app.screen.action_do_primary()            # Space → stage selection
+            await _settle(app, pilot)
+            for _ in range(25):
+                await pilot.pause(0.03)
+            staged = {f.path for f in app.be.status() if f.is_staged}
+            self.assertEqual(staged, set(self.files))
 
 
 if __name__ == "__main__":

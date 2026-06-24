@@ -74,7 +74,9 @@ HELP_TEXT = """[b]gitkit — keys[/b]
   ↑/↓ , j/k    move within a panel
   Tab          next panel (incl. the Info file-list)
   Enter        show a file's diff (in the Info file-list); or flip the file page
-  /            search the current commit's files → jump to one + show its diff
+  /            on the Info file-list: search files → jump + show diff;
+               on Untracked/Modified/Staged: batch popup (filter, select all/none,
+               Space=stage/unstage · d=discard the selection)
   Esc          jump back to the Tree
 
   [b]stage / commit[/b]  (focus a file panel)
@@ -485,6 +487,122 @@ class FileSearchModal(ModalScreen):
         self.dismiss(None)
 
 
+class _BatchItem(ListItem):
+    """A multi-selectable file row in the BatchFileModal (✓ / ☐ + path)."""
+
+    def __init__(self, path: str, selected: bool):
+        self.path = path
+        self.selected = selected
+        self._label = Label(self._text())
+        super().__init__(self._label)
+        self.set_class(selected, "batch-on")
+
+    def _text(self) -> Text:
+        # single-segment Text (like _OptItem) — measures correctly in the modal;
+        # selection is shown by the ✓/☐ glyph + the .batch-on row class
+        return Text(("  ✓  " if self.selected else "  ☐  ") + self.path,
+                    no_wrap=True, overflow="ellipsis")
+
+    def set_selected(self, on: bool) -> None:
+        self.selected = on
+        self._label.update(self._text())
+        self.set_class(on, "batch-on")
+
+
+class BatchFileModal(ModalScreen):
+    """Multi-select a staging panel's files — filter with /, [a] select all / [n]
+    none, [Enter] toggle one — then [Space] stage/unstage or [d] discard the whole
+    selection. Dismisses with (op, [paths]) where op is stage|unstage|discard."""
+
+    BINDINGS = [("escape", "cancel", "cancel"), ("slash", "to_filter", "filter"),
+                ("down", "to_list", "list"), ("a", "select_all", "all"),
+                ("n", "select_none", "none"), ("space", "do_primary", "stage"),
+                ("d", "do_discard", "discard")]
+
+    def __init__(self, kind: str, paths):
+        super().__init__()
+        self.kind = kind          # untracked | modified | staged
+        self._paths = list(paths)
+        self._selected = set()
+        self._filter_timer = None
+
+    def _verb(self) -> str:
+        return "取消暫存" if self.kind == "staged" else "暫存"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modalbox"):
+            yield Label(f"{self.kind} — 批次操作  ({len(self._paths)} 個)", id="btitle")
+            yield Input(placeholder="/ 過濾…", id="filter")
+            yield ListView(id="opts")
+            yield Label(Text(f"[Enter]選取  [a]全選  [n]全不選  "
+                             f"[Space]{self._verb()}  [d]丟棄  [Esc]取消"), classes="dim")
+
+    def on_mount(self) -> None:
+        self._rebuild("")
+        self.query_one("#filter", Input).focus()
+
+    def _matched(self, q: str):
+        ql = q.lower()
+        return [p for p in self._paths if ql in p.lower()]
+
+    def _rebuild(self, q: str) -> None:
+        matched = self._matched(q)
+        items = [_BatchItem(p, p in self._selected) for p in matched[:INFO_SEARCH_LIMIT]]
+        if len(matched) > INFO_SEARCH_LIMIT:
+            more = _BatchItem("… 還有更多,請再輸入縮小範圍", False)
+            more.disabled = True
+            items.append(more)
+        _refill_listview(self, self.query_one("#opts", ListView),
+                         items, 0 if items else None)
+        self._hint()
+
+    def _hint(self) -> None:
+        # plain string (no markup brackets) → safe to .update() in the sized modal
+        self.query_one("#btitle", Label).update(
+            f"{self.kind} — 批次操作  ·  已選 {len(self._selected)} / {len(self._paths)} 個")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+        q = event.value
+        self._filter_timer = self.set_timer(INFO_SEARCH_DEBOUNCE,
+                                            lambda: self._rebuild(q))
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        it = event.item
+        if isinstance(it, _BatchItem) and not it.disabled:
+            on = it.path not in self._selected
+            (self._selected.add if on else self._selected.discard)(it.path)
+            it.set_selected(on)
+            self._hint()
+
+    def action_select_all(self) -> None:
+        self._selected.update(self._matched(self.query_one("#filter", Input).value))
+        self._rebuild(self.query_one("#filter", Input).value)
+
+    def action_select_none(self) -> None:
+        self._selected.clear()
+        self._rebuild(self.query_one("#filter", Input).value)
+
+    def action_do_primary(self) -> None:
+        if self._selected:
+            op = "unstage" if self.kind == "staged" else "stage"
+            self.dismiss((op, sorted(self._selected)))
+
+    def action_do_discard(self) -> None:
+        if self._selected:
+            self.dismiss(("discard", sorted(self._selected)))
+
+    def action_to_list(self) -> None:
+        self.query_one("#opts", ListView).focus()
+
+    def action_to_filter(self) -> None:
+        self.query_one("#filter", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class BranchesModal(ModalScreen):
     """A floating window listing Local and Remote branches (filterable). Lives in
     a popup so long branch names get the full width and the Tree underneath isn't
@@ -840,6 +958,7 @@ class GitkitApp(App):
     #left ListView { border: round $primary; height: 1fr; }
     #tree { border: round $primary; height: 1fr; }
     CommitItem.head-flash { background: $warning 30%; }
+    _BatchItem.batch-on { background: $success 25%; }
     #infobox { height: 2fr; min-height: 8; border: round $primary; }
     #infohdr { height: 1; color: $accent; }
     #inforow { height: 1fr; }
@@ -1313,16 +1432,40 @@ class GitkitApp(App):
 
     # ── file search ("/" in the Info file-list) ──────────────────
     def action_search_files(self) -> None:
-        """'/' — only when the Info file-list is focused: opens a filter popup over
-        the current commit's files; picking one jumps to that file's page and shows
-        its diff. (After a pick the file-list keeps focus, so '/' works again.)"""
-        if getattr(self.focused, "id", None) != "difflist":
+        """'/' dispatches by which panel is focused:
+          * Info file-list (difflist) → search the current commit's files, jump to
+            the picked one and show its diff (focus stays here, so '/' works again),
+          * a staging panel (Untracked/Modified/Staged) → a batch popup to filter,
+            multi-select and stage/unstage/discard many files at once."""
+        fid = getattr(self.focused, "id", None)
+        if fid == "difflist":
+            if not self._info_files:
+                self._set_status("⚠ 沒有可搜尋的檔案")
+                return
+            paths = [f.path for f in self._info_files]
+            self.push_screen(FileSearchModal(paths), self._after_file_search)
+        elif fid in ("untracked", "modified", "staged"):
+            lv = self.query_one(f"#{fid}", ListView)
+            paths = [c.path for c in lv.children if isinstance(c, FileItem)]
+            if not paths:
+                self._set_status("⚠ 此面板沒有檔案")
+                return
+            self.push_screen(BatchFileModal(fid, paths), self._after_batch)
+
+    def _after_batch(self, result) -> None:
+        if not result:
             return
-        if not self._info_files:
-            self._set_status("⚠ 沒有可搜尋的檔案")
+        op, paths = result
+        if not paths:
             return
-        paths = [f.path for f in self._info_files]
-        self.push_screen(FileSearchModal(paths), self._after_file_search)
+        if op == "stage":
+            self._run_flow(self.flow.stage, paths)
+        elif op == "unstage":
+            self._run_flow(self.flow.unstage, paths)
+        elif op == "discard":
+            self.push_screen(
+                ConfirmModal(f"丟棄 {len(paths)} 個檔案的工作區變更?(≈ svn revert,不可復原)"),
+                lambda ok: self._run_flow(self.flow.discard, paths) if ok else None)
 
     def _after_file_search(self, path) -> None:
         if not path:

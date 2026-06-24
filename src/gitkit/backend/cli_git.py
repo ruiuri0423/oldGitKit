@@ -437,13 +437,21 @@ class CliGitBackend(GitBackend):
         return await self._text_async(self._file_diff_args(path, staged))
 
     # ── staging / commit ─────────────────────────────────────────
+    # batch ops can carry thousands of paths — split them so the command line
+    # never exceeds the OS limit (ARG_MAX / ~32KB on Windows).
+    _PATH_CHUNK = 400
+
+    def _run_paths(self, prefix: list[str], paths: list[str]) -> None:
+        for i in range(0, len(paths), self._PATH_CHUNK):
+            self._run([*prefix, *paths[i:i + self._PATH_CHUNK]])
+
     def stage(self, paths: list[str]) -> None:
         if paths:
-            self._run(["add", "--", *paths])
+            self._run_paths(["add", "--"], paths)
 
     def unstage(self, paths: list[str]) -> None:
         if paths:  # index -> HEAD (not `restore --staged`, which is 2.23+)
-            self._run(["reset", "-q", "HEAD", "--", *paths])
+            self._run_paths(["reset", "-q", "HEAD", "--"], paths)
 
     def discard(self, paths: list[str]) -> None:
         # ≈ svn revert; refuse the catch-all forms — the safe boundary lives in
@@ -453,7 +461,7 @@ class CliGitBackend(GitBackend):
             raise BackendError("discard refused a catch-all path",
                                argv=["checkout", "--", *paths], stderr="unsafe path")
         if paths:
-            self._run(["checkout", "--", *paths])
+            self._run_paths(["checkout", "--"], paths)
 
     def commit(self, message: str) -> Commit:
         self._run(["commit", "-m", message])
