@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# gitkit — simplified bash git helper (ci / push / mg / diff / reset).
+#
+# Pure bash, zero deps, targets git 1.8.3.1 on CentOS 7. Put this dir on PATH
+# (or symlink `gitkit` into ~/bin) and run `gitkit <command>`.
+set -uo pipefail
+
+# Resolve our own location (follow symlinks) so lib/ is found from anywhere.
+_src="$0"
+if command -v readlink >/dev/null 2>&1; then
+  _resolved="$(readlink -f "$_src" 2>/dev/null)" && [ -n "$_resolved" ] && _src="$_resolved"
+fi
+GK_HOME="$(cd "$(dirname "$_src")" && pwd)"
+GK_LIB="$GK_HOME/lib"
+
+# shellcheck source=lib/common.sh
+. "$GK_LIB/common.sh"
+. "$GK_LIB/ci.sh"
+. "$GK_LIB/push.sh"
+. "$GK_LIB/mg.sh"
+. "$GK_LIB/diff.sh"
+. "$GK_LIB/reset.sh"
+
+gk_usage() {
+  cat >&2 <<'EOF'
+gitkit — 簡化版 git 流程工具
+
+用法: gitkit <command>
+
+  ci      選擇 U/M 檔案 → add → commit → 選分支 fetch/pull 整合（含衝突處理）
+  push    推送；無新 commit 會提醒先 ci；新分支會詢問是否先 mg
+  mg      把當前分支合併進選定的目標分支（必要時 fetch/checkout 取回本地）
+  diff    選 U/M/S 檔案，依序用 git 設定的 difftool 開啟
+  reset   取消暫存檔案，或把分支重置到某個 commit（soft/mixed/hard）
+
+衝突選項: tf=their full  mf=mine full  tc=their conflict  mc=mine conflict
+          e=edit(git mergetool)  r=resolved  a=abort
+EOF
+}
+
+main() {
+  local cmd="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    ci)    gk_cmd_ci "$@";;
+    push)  gk_cmd_push "$@";;
+    mg)    gk_cmd_mg "$@";;
+    diff)  gk_cmd_diff "$@";;
+    reset) gk_cmd_reset "$@";;
+    ""|-h|--help|help) gk_usage;;
+    *) gk_err "未知指令: $cmd"; gk_usage; exit 2;;
+  esac
+}
+
+main "$@"
