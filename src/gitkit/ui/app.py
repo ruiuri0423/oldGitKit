@@ -43,7 +43,7 @@ INFO_DEBOUNCE = 0.25  # seconds the cursor must rest before fetching Info
 TREE_PAGE = 80        # commits loaded per page (the Tree grows as you scroll down)
 TREE_PREFETCH = 15    # start loading the next page this many rows from the bottom
 INFO_FILE_PAGE = 200  # Info file-list shows a FIXED window of this many files/page
-INFO_DIFF_LINES = 2000  # max diff lines rendered for one file before truncating
+INFO_DIFF_LINES = 5000  # max diff rows rendered for one file (rendered off-thread)
 INFO_SEARCH_LIMIT = 100  # max matches shown in the "/" file-search popup
 INFO_SEARCH_DEBOUNCE = 0.18  # wait this long after a keystroke before re-filtering
 
@@ -1370,14 +1370,15 @@ class GitkitApp(App):
             lines = lines[:600] + [f"… (+{len(lines) - 600} more)"]
         self.query_one("#difftext", Static).update(Text("\n".join(lines)))
 
-    def _info_diff(self, diff_text: str) -> None:
-        # width = the actual diff pane (not the whole app) so side-by-side rows fit
-        # and don't bleed; render_side_by_side caps the OUTPUT (keeps it parseable →
-        # still side-by-side even when truncated) and is no-wrap (long lines clip /
-        # scroll horizontally rather than wrapping onto the next line)
+    async def _render_diff_text(self, diff_text: str) -> None:
+        # parse + build the side-by-side Text OFF the UI thread (a 5k-line diff is
+        # ~50ms but still shouldn't block the loop); width = the actual diff pane so
+        # rows fit and don't bleed; render_side_by_side caps the OUTPUT (stays
+        # parseable → side-by-side even when truncated) and is no-wrap.
         w = max(40, self.query_one("#diffview").size.width - 2)
-        self.query_one("#difftext", Static).update(
-            render_side_by_side(diff_text, w, max_rows=INFO_DIFF_LINES))
+        rendered = await asyncio.to_thread(
+            render_side_by_side, diff_text, w, INFO_DIFF_LINES)
+        self.query_one("#difftext", Static).update(rendered)
 
     def _fill_difflist(self, rows) -> None:
         # the clear/replace path; also resets the file-paging state
@@ -1586,7 +1587,7 @@ class GitkitApp(App):
         async def fetch():
             text = await self.be.file_diff_async(path, staged=(kind == "staged"))
             self._fill_difflist([])
-            self._info_diff(text)
+            await self._render_diff_text(text)
 
         self._schedule_info(lambda: self._set_ctx(f"{kind}: {path}"), fetch)
 
@@ -1678,14 +1679,22 @@ class GitkitApp(App):
                 lambda ok: self._run_flow(self.flow.checkout, sha) if ok else None)
 
     def _open_diff_item(self, it) -> None:
+        self.query_one("#difftext", Static).update(Text("diff 計算中…", style="dim"))
+        self.run_worker(self._open_diff_async(it.sha, it.path, it.staged),
+                        exclusive=True, group="diff", exit_on_error=False)
+
+    async def _open_diff_async(self, sha, path, staged) -> None:
+        # git read AND render off the UI thread so a big file never freezes the app
         try:
-            if it.sha is not None:
-                text = self.be.commit_file_diff(it.sha, it.path)
+            if sha is not None:
+                text = await asyncio.to_thread(self.be.commit_file_diff, sha, path)
             else:
-                text = self.be.file_diff(it.path, staged=it.staged)
-            self._info_diff(text)
+                text = await asyncio.to_thread(self.be.file_diff, path, staged=staged)
         except BackendError as e:
-            self._info_msg(f"git error: {e}\n{e.stderr}")
+            self.query_one("#difftext", Static).update(
+                Text(f"git error: {e}\n{getattr(e, 'stderr', '')}"))
+            return
+        await self._render_diff_text(text)
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
