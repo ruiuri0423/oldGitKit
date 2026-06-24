@@ -42,8 +42,9 @@ WRITE_SUBCMDS = {"add", "reset", "checkout", "commit", "branch", "merge",
 INFO_DEBOUNCE = 0.25  # seconds the cursor must rest before fetching Info
 TREE_PAGE = 80        # commits loaded per page (the Tree grows as you scroll down)
 TREE_PREFETCH = 15    # start loading the next page this many rows from the bottom
-INFO_FILE_PAGE = 200  # Info file-list rows rendered per page (rest behind "load more")
+INFO_FILE_PAGE = 200  # Info file-list shows a FIXED window of this many files/page
 INFO_DIFF_LINES = 2000  # max diff lines rendered for one file before truncating
+INFO_SEARCH_LIMIT = 100  # max matches shown in the "/" file-search popup
 
 
 def _fmt_cmd(args) -> str:
@@ -71,7 +72,8 @@ HELP_TEXT = """[b]gitkit — keys[/b]
   [b]navigate[/b]
   ↑/↓ , j/k    move within a panel
   Tab          next panel (incl. the Info file-list)
-  Enter        show a file's diff (in the Info file-list)
+  Enter        show a file's diff (in the Info file-list); or flip the file page
+  /            search the current commit's files → jump to one + show its diff
   Esc          jump back to the Tree
 
   [b]stage / commit[/b]  (focus a file panel)
@@ -236,17 +238,15 @@ class DiffFileItem(ListItem):
         self.staged = staged
 
 
-class _MoreFilesItem(ListItem):
-    """A 'load more files' sentinel at the bottom of the Info file-list. A commit
-    touching thousands of files is rendered a page at a time (INFO_FILE_PAGE) —
-    building every row at once froze the UI / blew up memory — so the rest sit
-    behind this row and are appended on demand (collapse → expand)."""
+class _PageNavItem(ListItem):
+    """A page-flip row in the Info file-list. The list shows a FIXED window of
+    INFO_FILE_PAGE files; selecting this jumps to the previous/next page (the page
+    is REPLACED, not appended) so the mounted widget count stays bounded no matter
+    how many files the commit touches."""
 
-    def __init__(self, remaining: int):
-        self.remaining = remaining
-        t = Text(f" ▾ 還有 {remaining} 個檔案 — 按 Enter / 點擊載入更多",
-                 style="italic yellow")
-        super().__init__(Label(t))
+    def __init__(self, delta: int, label: str):
+        self.delta = delta   # -1 = previous page, +1 = next page
+        super().__init__(Label(Text(label, style="italic yellow")))
 
 
 def _commit_items(lines, width) -> List[CommitItem]:
@@ -393,6 +393,64 @@ class SelectModal(ModalScreen):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if isinstance(event.item, _OptItem):
+            self.dismiss(event.item.value)
+
+    def action_to_list(self) -> None:
+        self.query_one("#opts", ListView).focus()
+
+    def action_to_filter(self) -> None:
+        self.query_one("#filter", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class FileSearchModal(ModalScreen):
+    """Type to filter the current commit's files; Enter / click jumps to one.
+    Dismisses with the chosen path (or None). Matches are capped at
+    INFO_SEARCH_LIMIT so a commit with thousands of files doesn't build thousands
+    of rows here either."""
+
+    BINDINGS = [("escape", "cancel", "cancel"), ("down", "to_list", "list"),
+                ("up", "to_filter", "filter")]
+
+    def __init__(self, paths):
+        super().__init__()
+        self._paths = list(paths)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modalbox"):
+            yield Label(f"搜尋檔案  ({len(self._paths)} 個)")
+            yield Input(placeholder="/ 輸入檔名過濾…", id="filter")
+            yield ListView(id="opts")
+            yield Label(Text("[Enter] 選取   [↓] 清單   [Esc] 取消"), classes="dim")
+
+    def on_mount(self) -> None:
+        self._rebuild("")
+        self.query_one("#filter", Input).focus()
+
+    def _rebuild(self, q: str) -> None:
+        ql = q.lower()
+        matched = [p for p in self._paths if ql in p.lower()]
+        items = [_OptItem(p) for p in matched[:INFO_SEARCH_LIMIT]]
+        if len(matched) > INFO_SEARCH_LIMIT:
+            hint = _OptItem(f"… 還有 {len(matched) - INFO_SEARCH_LIMIT} 筆,請再輸入縮小範圍")
+            hint.disabled = True
+            items.append(hint)
+        _refill_listview(self, self.query_one("#opts", ListView),
+                         items, 0 if items else None)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._rebuild(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        lv = self.query_one("#opts", ListView)
+        it = lv.highlighted_child
+        if isinstance(it, _OptItem) and not it.disabled:
+            self.dismiss(it.value)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if isinstance(event.item, _OptItem) and not event.item.disabled:
             self.dismiss(event.item.value)
 
     def action_to_list(self) -> None:
@@ -809,6 +867,7 @@ class GitkitApp(App):
         ("p", "pull", "pull"),
         ("P", "push", "push"),
         ("o", "output", "command log"),
+        ("slash", "search_files", "search files"),
     ]
 
     def __init__(self, repo: str):
@@ -842,7 +901,7 @@ class GitkitApp(App):
         self._info_files = []          # full DiffFile list for the shown commit
         self._info_files_sha = None    # sha (None = staged working tree)
         self._info_files_staged = False
-        self._info_files_shown = 0     # how many rows are currently rendered
+        self._info_page = 0            # current file-list page (fixed window)
         # Tree pagination: the log is loaded a page at a time and grown as the
         # cursor nears the bottom, so a repo with thousands of commits doesn't
         # stall the initial load (and isn't capped at one page).
@@ -1183,7 +1242,7 @@ class GitkitApp(App):
     def _fill_difflist(self, rows) -> None:
         # the clear/replace path; also resets the file-paging state
         self._info_files = []
-        self._info_files_shown = 0
+        self._info_page = 0
         rows = list(rows)
         items = ([DiffFileItem(r, sha=sha, path=path, staged=staged)
                   for r, sha, path, staged in rows] if rows
@@ -1191,46 +1250,76 @@ class GitkitApp(App):
         self._repopulate(self.query_one("#difflist", ListView), items)
 
     def _show_files(self, files, sha, staged) -> None:
-        """Render the Info file-list for a commit / staged set ONE page at a time.
-        The full list is kept in memory (cheap — just dataclasses); only a page of
-        row widgets is built, the rest sit behind a 'load more' row."""
+        """Show the Info file-list for a commit / staged set, paged. The full list
+        is kept in memory (cheap dataclasses) but only a FIXED window of
+        INFO_FILE_PAGE rows is mounted at once — paging REPLACES the window, so the
+        widget count never grows with the file count (no freeze, no accumulation)."""
         self._info_files = files
         self._info_files_sha = sha
         self._info_files_staged = staged
-        page = files[:INFO_FILE_PAGE]
-        self._info_files_shown = len(page)
-        items = [self._make_diff_item(f, sha, staged) for f in page]
-        if len(files) > INFO_FILE_PAGE:
-            items.append(_MoreFilesItem(len(files) - INFO_FILE_PAGE))
+        self._info_page = 0
+        self._render_file_page()
+
+    def _file_npages(self) -> int:
+        return max(1, (len(self._info_files) + INFO_FILE_PAGE - 1) // INFO_FILE_PAGE)
+
+    def _render_file_page(self) -> None:
+        files = self._info_files
+        total = len(files)
+        npages = self._file_npages()
+        self._info_page = max(0, min(self._info_page, npages - 1))
+        page = self._info_page
+        start = page * INFO_FILE_PAGE
+        end = min(start + INFO_FILE_PAGE, total)
+        sha, staged = self._info_files_sha, self._info_files_staged
+        items = []
+        if page > 0:
+            items.append(_PageNavItem(-1, f" ▴ 上一頁   (第 {page + 1}/{npages} 頁)"))
+        items += [self._make_diff_item(f, sha, staged) for f in files[start:end]]
+        if end < total:
+            items.append(_PageNavItem(
+                +1, f" ▾ 下一頁   ({end + 1}–{min(end + INFO_FILE_PAGE, total)} / {total})"))
         if not items:
             items = [ListItem(Label(Text("—", style="dim")))]
         self._repopulate(self.query_one("#difflist", ListView), items)
 
-    def _load_more_files(self) -> None:
-        """Append the next page of file rows in place of the 'load more' row."""
-        lv = self.query_one("#difflist", ListView)
-        start = self._info_files_shown
-        files = self._info_files
-        end = min(start + INFO_FILE_PAGE, len(files))
-        if start >= end:
+    def _page_files(self, delta: int) -> None:
+        self._info_page += delta
+        self._render_file_page()
+
+    # ── file search ("/" in the Info file-list) ──────────────────
+    def action_search_files(self) -> None:
+        """'/' opens a filter popup over the current commit's files; picking one
+        jumps the file-list to that file's page and shows its diff."""
+        if not self._info_files:
+            self._set_status("⚠ 沒有可搜尋的檔案")
             return
-        new_items = [self._make_diff_item(f, self._info_files_sha,
-                                          self._info_files_staged)
-                     for f in files[start:end]]
-        self._info_files_shown = end
-        remaining = len(files) - end
+        paths = [f.path for f in self._info_files]
+        self.push_screen(FileSearchModal(paths), self._after_file_search)
 
-        async def grow():
-            for child in list(lv.children):   # drop the old sentinel first
-                if isinstance(child, _MoreFilesItem):
-                    await child.remove()
-            for it in new_items:
-                lv.append(it)
-            if remaining:
-                lv.append(_MoreFilesItem(remaining))
+    def _after_file_search(self, path) -> None:
+        if not path:
+            return
+        idx = next((i for i, f in enumerate(self._info_files) if f.path == path), None)
+        if idx is None:
+            return
+        self._info_page = idx // INFO_FILE_PAGE      # jump to that file's page
+        self._render_file_page()
+        # the page is rendered by a worker (clear+append) — poll until the row is
+        # mounted, then highlight it and open its diff
+        self.run_worker(self._focus_file_async(path), group="focusfile",
+                        exclusive=True, exit_on_error=False)
 
-        self.run_worker(grow(), group="difflist-more", exclusive=True,
-                        exit_on_error=False)
+    async def _focus_file_async(self, path: str) -> None:
+        lv = self.query_one("#difflist", ListView)
+        for _ in range(25):
+            for i, child in enumerate(lv.children):
+                if isinstance(child, DiffFileItem) and child.path == path:
+                    lv.index = i
+                    lv.focus()
+                    self._open_diff_item(child)      # diff → Info diff pane
+                    return
+            await asyncio.sleep(0.02)                # wait for the repopulate worker
 
     def _make_diff_item(self, f, sha, staged) -> DiffFileItem:
         r, s, p, st = self._file_row(f, sha, staged)
@@ -1378,8 +1467,8 @@ class GitkitApp(App):
                 # focus-then-select two-step (which felt like a double-click)
                 self._open_diff_item(w)
                 return
-            if isinstance(w, _MoreFilesItem):
-                self._load_more_files()
+            if isinstance(w, _PageNavItem):
+                self._page_files(w.delta)
                 return
             if getattr(w, "id", None) == "tree":
                 self._tree_click_chain = event.chain
@@ -1396,8 +1485,8 @@ class GitkitApp(App):
             self._switch_to_commit(event.item.commit)  # Enter or double-click
             return
         if lv == "difflist":
-            if isinstance(event.item, _MoreFilesItem):
-                self._load_more_files()
+            if isinstance(event.item, _PageNavItem):
+                self._page_files(event.item.delta)
             elif isinstance(event.item, DiffFileItem):
                 self._open_diff_item(event.item)
 
