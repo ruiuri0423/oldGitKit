@@ -42,6 +42,8 @@ WRITE_SUBCMDS = {"add", "reset", "checkout", "commit", "branch", "merge",
 INFO_DEBOUNCE = 0.25  # seconds the cursor must rest before fetching Info
 TREE_PAGE = 80        # commits loaded per page (the Tree grows as you scroll down)
 TREE_PREFETCH = 15    # start loading the next page this many rows from the bottom
+INFO_FILE_PAGE = 200  # Info file-list rows rendered per page (rest behind "load more")
+INFO_DIFF_LINES = 2000  # max diff lines rendered for one file before truncating
 
 
 def _fmt_cmd(args) -> str:
@@ -232,6 +234,19 @@ class DiffFileItem(ListItem):
         self.sha = sha          # commit sha, or None for a working-tree file
         self.path = path
         self.staged = staged
+
+
+class _MoreFilesItem(ListItem):
+    """A 'load more files' sentinel at the bottom of the Info file-list. A commit
+    touching thousands of files is rendered a page at a time (INFO_FILE_PAGE) —
+    building every row at once froze the UI / blew up memory — so the rest sit
+    behind this row and are appended on demand (collapse → expand)."""
+
+    def __init__(self, remaining: int):
+        self.remaining = remaining
+        t = Text(f" ▾ 還有 {remaining} 個檔案 — 按 Enter / 點擊載入更多",
+                 style="italic yellow")
+        super().__init__(Label(t))
 
 
 def _commit_items(lines, width) -> List[CommitItem]:
@@ -822,6 +837,12 @@ class GitkitApp(App):
         self._status_msg = "Ready"  # persistent status (Info 'loading…' overlays it)
         self._info_timer = None  # debounce timer for the Info panel
         self._info_worker = None  # in-flight Info fetch (cancelled when moving away)
+        # Info file-list paging: hold the full list, render a page at a time so a
+        # commit touching thousands of files doesn't freeze the UI.
+        self._info_files = []          # full DiffFile list for the shown commit
+        self._info_files_sha = None    # sha (None = staged working tree)
+        self._info_files_staged = False
+        self._info_files_shown = 0     # how many rows are currently rendered
         # Tree pagination: the log is loaded a page at a time and grown as the
         # cursor nears the bottom, so a repo with thousands of commits doesn't
         # stall the initial load (and isn't capped at one page).
@@ -1150,15 +1171,70 @@ class GitkitApp(App):
         self.query_one("#difftext", Static).update(Text("\n".join(lines)))
 
     def _info_diff(self, diff_text: str) -> None:
+        # one file's diff can still be huge — cap the rendered lines so a giant
+        # file doesn't freeze rendering (the file list is paged separately)
+        lines = diff_text.splitlines()
+        if len(lines) > INFO_DIFF_LINES:
+            diff_text = "\n".join(lines[:INFO_DIFF_LINES]) + (
+                f"\n… (+{len(lines) - INFO_DIFF_LINES} 行,已截斷 — 單檔過大)")
         w = max(40, self.size.width - self.query_one("#difflist").size.width - 8)
         self.query_one("#difftext", Static).update(render_side_by_side(diff_text, w))
 
     def _fill_difflist(self, rows) -> None:
+        # the clear/replace path; also resets the file-paging state
+        self._info_files = []
+        self._info_files_shown = 0
         rows = list(rows)
         items = ([DiffFileItem(r, sha=sha, path=path, staged=staged)
                   for r, sha, path, staged in rows] if rows
                  else [ListItem(Label(Text("—", style="dim")))])
         self._repopulate(self.query_one("#difflist", ListView), items)
+
+    def _show_files(self, files, sha, staged) -> None:
+        """Render the Info file-list for a commit / staged set ONE page at a time.
+        The full list is kept in memory (cheap — just dataclasses); only a page of
+        row widgets is built, the rest sit behind a 'load more' row."""
+        self._info_files = files
+        self._info_files_sha = sha
+        self._info_files_staged = staged
+        page = files[:INFO_FILE_PAGE]
+        self._info_files_shown = len(page)
+        items = [self._make_diff_item(f, sha, staged) for f in page]
+        if len(files) > INFO_FILE_PAGE:
+            items.append(_MoreFilesItem(len(files) - INFO_FILE_PAGE))
+        if not items:
+            items = [ListItem(Label(Text("—", style="dim")))]
+        self._repopulate(self.query_one("#difflist", ListView), items)
+
+    def _load_more_files(self) -> None:
+        """Append the next page of file rows in place of the 'load more' row."""
+        lv = self.query_one("#difflist", ListView)
+        start = self._info_files_shown
+        files = self._info_files
+        end = min(start + INFO_FILE_PAGE, len(files))
+        if start >= end:
+            return
+        new_items = [self._make_diff_item(f, self._info_files_sha,
+                                          self._info_files_staged)
+                     for f in files[start:end]]
+        self._info_files_shown = end
+        remaining = len(files) - end
+
+        async def grow():
+            for child in list(lv.children):   # drop the old sentinel first
+                if isinstance(child, _MoreFilesItem):
+                    await child.remove()
+            for it in new_items:
+                lv.append(it)
+            if remaining:
+                lv.append(_MoreFilesItem(remaining))
+
+        self.run_worker(grow(), group="difflist-more", exclusive=True,
+                        exit_on_error=False)
+
+    def _make_diff_item(self, f, sha, staged) -> DiffFileItem:
+        r, s, p, st = self._file_row(f, sha, staged)
+        return DiffFileItem(r, sha=s, path=p, staged=st)
 
     @staticmethod
     def _file_row(f, sha, staged):
@@ -1224,7 +1300,7 @@ class GitkitApp(App):
         async def fetch():
             files = await self.be.commit_files_async(c.sha)
             msg = await self.be.commit_message_async(c.sha)
-            self._fill_difflist([self._file_row(f, c.sha, False) for f in files])
+            self._show_files(files, c.sha, False)
             self._info_msg(msg)
 
         self._schedule_info(
@@ -1233,7 +1309,7 @@ class GitkitApp(App):
     def _info_staged(self) -> None:
         async def fetch():
             files = await asyncio.to_thread(self.be.diff_files, staged=True)
-            self._fill_difflist([self._file_row(f, None, True) for f in files])
+            self._show_files(files, None, True)
             self._info_msg("")
 
         self._schedule_info(
@@ -1302,6 +1378,9 @@ class GitkitApp(App):
                 # focus-then-select two-step (which felt like a double-click)
                 self._open_diff_item(w)
                 return
+            if isinstance(w, _MoreFilesItem):
+                self._load_more_files()
+                return
             if getattr(w, "id", None) == "tree":
                 self._tree_click_chain = event.chain
                 break
@@ -1316,8 +1395,11 @@ class GitkitApp(App):
                 return
             self._switch_to_commit(event.item.commit)  # Enter or double-click
             return
-        if lv == "difflist" and isinstance(event.item, DiffFileItem):
-            self._open_diff_item(event.item)
+        if lv == "difflist":
+            if isinstance(event.item, _MoreFilesItem):
+                self._load_more_files()
+            elif isinstance(event.item, DiffFileItem):
+                self._open_diff_item(event.item)
 
     def _switch_to_commit(self, commit) -> None:
         local = [r for r in commit.refs if r in self._local_names]
