@@ -80,6 +80,10 @@ class InfoPagingCase(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(0.03)
             # KEY: still a FIXED window (20), not accumulated to 40
             self.assertEqual(self._counts(app), (self.PAGE, 1, 1))  # prev + next
+            # cursor lands on the FIRST file of the new page (not the nav row)
+            lv = app.query_one("#difflist", ListView)
+            self.assertIsInstance(lv.highlighted_child, DiffFileItem)
+            self.assertEqual(lv.highlighted_child.path, "f020.txt")  # page1 first file
 
             app._page_files(+1)
             for _ in range(15):

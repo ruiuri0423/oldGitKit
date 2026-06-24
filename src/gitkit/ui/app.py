@@ -102,13 +102,20 @@ def _refill_listview(screen, lv: "ListView", items, first) -> None:
     lands against the stale (old) rows — the filter highlight then jumps to the
     wrong option. Doing it in a worker after the clear fixes that."""
     async def rebuild():
-        await lv.clear()
-        for it in items:
-            lv.append(it)
-        if first is not None and 0 <= first < len(items):
-            lv.index = first
+        try:
+            await lv.clear()
+            for it in items:
+                lv.append(it)
+            if first is not None and 0 <= first < len(items):
+                lv.index = first
+        except Exception:
+            # rapid re-filter cancels/restarts this worker; a row can be mid-removal
+            # or the modal mid-teardown → a transient error here must NOT crash the
+            # whole app (that was the "search on a huge list crashes" symptom).
+            pass
 
-    screen.run_worker(rebuild(), exclusive=True, group=f"opts-{id(lv)}")
+    screen.run_worker(rebuild(), exclusive=True, group=f"opts-{id(lv)}",
+                      exit_on_error=False)
 
 
 def _append_graph(text: Text, graph: str, color=None) -> None:
@@ -431,10 +438,17 @@ class FileSearchModal(ModalScreen):
 
     def _rebuild(self, q: str) -> None:
         ql = q.lower()
-        matched = [p for p in self._paths if ql in p.lower()]
-        items = [_OptItem(p) for p in matched[:INFO_SEARCH_LIMIT]]
-        if len(matched) > INFO_SEARCH_LIMIT:
-            hint = _OptItem(f"… 還有 {len(matched) - INFO_SEARCH_LIMIT} 筆,請再輸入縮小範圍")
+        # stop scanning once we have a full page (+1 to know there's more) — so a
+        # 20000-file commit isn't fully rescanned on every keystroke
+        items, more = [], False
+        for p in self._paths:
+            if ql in p.lower():
+                if len(items) >= INFO_SEARCH_LIMIT:
+                    more = True
+                    break
+                items.append(_OptItem(p))
+        if more:
+            hint = _OptItem("… 還有更多,請再輸入縮小範圍")
             hint.disabled = True
             items.append(hint)
         _refill_listview(self, self.query_one("#opts", ListView),
@@ -1275,13 +1289,16 @@ class GitkitApp(App):
         items = []
         if page > 0:
             items.append(_PageNavItem(-1, f" ▴ 上一頁   (第 {page + 1}/{npages} 頁)"))
+        first_file = len(items)  # land the cursor on the first file of the new page
         items += [self._make_diff_item(f, sha, staged) for f in files[start:end]]
         if end < total:
             items.append(_PageNavItem(
                 +1, f" ▾ 下一頁   ({end + 1}–{min(end + INFO_FILE_PAGE, total)} / {total})"))
         if not items:
             items = [ListItem(Label(Text("—", style="dim")))]
-        self._repopulate(self.query_one("#difflist", ListView), items)
+            first_file = 0
+        self._repopulate(self.query_one("#difflist", ListView), items,
+                         select_index=first_file)
 
     def _page_files(self, delta: int) -> None:
         self._info_page += delta
