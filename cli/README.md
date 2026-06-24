@@ -1,11 +1,12 @@
 # gitkit (bash CLI)
 
-A simplified, **pure-bash** git workflow helper — no Python, no TUI, no
-泳道圖/INFO diff. It wraps the handful of commands a day-to-day SVN→git
+A simplified, **pure-bash** git workflow helper — no Python, no TUI, no lane
+graph / INFO diff. It wraps the handful of commands a day-to-day SVN→git
 migration actually needs, behind numbered-menu prompts.
 
 Targets **git 1.8.3.1 / bash 4.2 on CentOS 7** (air-gapped, no root): zero
-external dependencies, no `git -C`, no porcelain v2.
+external dependencies, plain everyday git commands only (no `git -C`, no
+porcelain v2, no exotic plumbing).
 
 ## Install
 
@@ -21,47 +22,62 @@ the symlink works from anywhere.
 
 | command | flow |
 |---------|------|
-| `gitkit ci`    | 選 U/M 檔案 → `add` → 輸入訊息 `commit` → 選分支 `fetch`/merge 整合（含衝突處理）。無變更時提示「無文件變更」。 |
-| `gitkit push`  | 有 upstream 但 0 領先 → 提示先 `ci`；新分支（無 upstream）→ 詢問是否先 `mg`，否則直接 `push -u`。 |
-| `gitkit mg`    | 把**當前分支**合併進選定的目標分支；目標只在遠端時先 `fetch` + `checkout -b` 取回本地。完成後提示可 `push`。 |
-| `gitkit diff`  | 選 U/M/S 檔案，依序用 git 設定的 `difftool` 開啟（未追蹤檔案略過）。 |
-| `gitkit reset` | 取消暫存檔案（`reset HEAD -- files`），或把分支重置到某個 commit（`--soft`/`--mixed`/`--hard`，hard 需確認）。 |
+| `gitkit ci`    | pick U/M files → `add` → type a message → `commit` → pick a branch to `fetch` + merge-integrate (with conflict handling). Reports "No changes" when there is nothing to do. |
+| `gitkit push`  | upstream exists but 0 ahead → tells you to `ci` first; new branch (no upstream) → asks whether to `mg` first, otherwise `push -u`. |
+| `gitkit mg`    | merge the **current** branch into a chosen target; if the target is remote-only, `fetch` + `checkout -b` to bring it local first. Tells you to `push` afterwards. |
+| `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked files are skipped). |
+| `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
 
-## 衝突解決選項
+## Conflict resolution
 
-當 `ci` / `mg` 整合產生衝突時，對**所有衝突檔案**選一種處理：
+When `ci` / `mg` integration produces conflicts, choose one action for **all**
+conflicted files:
 
-| 選項 | 意義 | 底層 |
-|------|------|------|
-| `tf` | their full — 整個檔案改用對方版本 | `git checkout --theirs` |
-| `mf` | mine full — 整個檔案保留我方版本  | `git checkout --ours` |
-| `tc` | their conflict — 只在衝突區塊取對方，保留自動合併的部分 | 衝突標記解析（awk） |
-| `mc` | mine conflict — 只在衝突區塊取我方 | 衝突標記解析（awk） |
-| `e`  | edit — 依序開啟 git 設定的 mergetool | `git mergetool` |
-| `r`  | resolved — 標記為已解決並完成（仍含標記者會擋下） | `git add` |
-| `a`  | abort — 放棄整個合併 | `git merge --abort` |
+| option | meaning | underlying git |
+|--------|---------|----------------|
+| `tf` | their full — replace the whole file with their version | `git checkout --theirs` |
+| `mf` | mine full — keep the whole file as our version        | `git checkout --ours` |
+| `tc` | their conflict — take their side only inside conflict blocks, keep auto-merged parts | conflict-marker parse (awk) |
+| `mc` | mine conflict — take our side only inside conflict blocks  | conflict-marker parse (awk) |
+| `e`  | edit — open git's configured mergetool in sequence | `git mergetool` |
+| `r`  | resolved — mark resolved and finish (files still containing markers are blocked) | `git add` |
+| `a`  | abort — drop the whole merge | `git merge --abort` |
 
-`tc`/`mc` 支援 diff3 衝突樣式（`|||||||` base 區段會被丟棄）。
+`tc`/`mc` support the diff3 conflict style (the `|||||||` base section is
+dropped).
 
-## 選取介面
+## Selection UI
 
-零依賴：列出帶編號的清單，輸入編號。多選以空格分隔（如 `1 3 5`），`a`
-全選，直接 Enter 取消。
+Zero-dependency: a numbered list is printed; type the number(s). Multi-select
+takes space-separated numbers (e.g. `1 3 5`), `a` selects all, and a bare Enter
+cancels.
 
-## diff / merge 工具設定
+## diff / merge tool config
 
-`diff` 與衝突 `e` 走 git 標準設定，請先設定：
+`diff` and the conflict `e` option use git's standard configuration, so set:
 
 ```sh
 git config --global diff.tool  <tool>
 git config --global merge.tool <tool>
 ```
 
-## 測試
+## Tests
 
 ```sh
 bash cli/tests/run.sh
 ```
 
-建構臨時 repo、以管線餵入選單答案來驗證 `ci`/`push`/`mg`/`reset` 與衝突解析
-（互動式的 `e`/difftool 不在自動測試範圍）。
+Builds throwaway repos and pipes menu answers to exercise `ci`/`push`/`mg`/
+`reset` and the conflict parser (21 checks). The interactive `e`/difftool paths
+are out of scope for the automated tests.
+
+## git commands used
+
+Everyday porcelain plus a few standard read-only idioms, all available in git
+1.8.3.1:
+
+```
+add  commit  push  fetch  merge  checkout  reset  diff  difftool  mergetool
+status --porcelain   branch / branch -r / branch --list   log --oneline
+remote   symbolic-ref   rev-parse   rev-list --count
+```

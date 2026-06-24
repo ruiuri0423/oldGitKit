@@ -23,18 +23,21 @@ GK_LIB="$GK_HOME/lib"
 
 gk_usage() {
   cat >&2 <<'EOF'
-gitkit — 簡化版 git 流程工具
+gitkit — simplified git workflow tool
 
-用法: gitkit <command>
+Usage: gitkit <command>
 
-  ci      選擇 U/M 檔案 → add → commit → 選分支 fetch/pull 整合（含衝突處理）
-  push    推送；無新 commit 會提醒先 ci；新分支會詢問是否先 mg
-  mg      把當前分支合併進選定的目標分支（必要時 fetch/checkout 取回本地）
-  diff    選 U/M/S 檔案，依序用 git 設定的 difftool 開啟
-  reset   取消暫存檔案，或把分支重置到某個 commit（soft/mixed/hard）
+  ci      pick U/M files -> add -> commit -> pick a branch to fetch/pull
+          and integrate (with conflict handling)
+  push    push; warns to run ci first when there is nothing new; a new
+          branch is asked whether to run mg first
+  mg      merge the current branch into a chosen target branch
+          (fetch/checkout to bring it local when needed)
+  diff    pick U/M/S files and open each in git's configured difftool
+  reset   unstage files, or reset the branch to a commit (soft/mixed/hard)
 
-衝突選項: tf=their full  mf=mine full  tc=their conflict  mc=mine conflict
-          e=edit(git mergetool)  r=resolved  a=abort
+Conflict options: tf=their full  mf=mine full  tc=their conflict  mc=mine conflict
+                  e=edit(git mergetool)  r=resolved  a=abort
 EOF
 }
 

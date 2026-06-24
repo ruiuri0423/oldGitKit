@@ -71,7 +71,7 @@ echo "== gitkit ci (no changes) =="
   d="$(newrepo)"; cd "$d"
   echo a > a.txt; git add a.txt; git commit -qm init
   out="$(printf '' | "$GITKIT" ci 2>&1)"
-  case "$out" in *無文件變更*) ok "reports 無文件變更";; *) bad "no-change notice (got: $out)";; esac
+  case "$out" in *"No changes"*) ok "reports No changes";; *) bad "no-change notice (got: $out)";; esac
 )
 
 echo "== gitkit ci integrate with conflict, resolved via tc (theirs) =="
@@ -99,7 +99,7 @@ echo "== gitkit push guard (no new commit) =="
   echo a > a.txt; git add a.txt; git commit -qm init
   git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
   out="$(printf '' | "$GITKIT" push 2>&1)"
-  case "$out" in *請先執行\ gitkit\ ci*) ok "blocks empty push";; *) bad "empty-push guard (got: $out)";; esac
+  case "$out" in *"run gitkit ci first"*) ok "blocks empty push";; *) bad "empty-push guard (got: $out)";; esac
 )
 
 echo "== gitkit reset unstage =="

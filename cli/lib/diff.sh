@@ -11,20 +11,20 @@ gk_cmd_diff() {
   for f in "${GK_U[@]}"; do labels+=("U  $f"); kinds+=("U"); paths+=("$f"); done
 
   if [ ${#labels[@]} -eq 0 ]; then
-    gk_info "沒有可比較的變更"
+    gk_info "no changes to compare"
     return 0
   fi
 
-  gk_menu_multi "選擇要 diff 的檔案（依序開啟）" "${labels[@]}" \
-    || { gk_warn "已取消"; return 1; }
+  gk_menu_multi "Select files to diff (opened in sequence)" "${labels[@]}" \
+    || { gk_warn "cancelled"; return 1; }
 
   local k p
   for i in "${GK_PICK_IDXS[@]}"; do
     k="${kinds[$i]}"; p="${paths[$i]}"
     case "$k" in
-      S) gk_info "diff (已暫存): $p"; gk_git difftool --staged -- "$p";;
-      M) gk_info "diff (工作區):  $p"; gk_git difftool -- "$p";;
-      U) gk_warn "未追蹤檔案無前一版本，略過: $p";;
+      S) gk_info "diff (staged):  $p"; gk_git difftool --cached -- "$p";;
+      M) gk_info "diff (working): $p"; gk_git difftool -- "$p";;
+      U) gk_warn "untracked file has no previous version, skipping: $p";;
     esac
   done
 }
