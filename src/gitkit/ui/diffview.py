@@ -41,9 +41,19 @@ def _row(out: Text, left, right, half: int) -> None:
     out.append("\n")
 
 
-def render_side_by_side(diff_text: str, width: int = 120) -> Text:
+def render_side_by_side(diff_text: str, width: int = 120, max_rows: int = 2000) -> Text:
+    """Render a unified diff as side-by-side Text (no_wrap → never bleeds onto the
+    next line; long lines clip per side). Truncation caps the OUTPUT rows (keeping
+    the diff parseable, so it stays side-by-side) rather than cutting the input."""
     if PatchSet is None or not diff_text.strip():
-        return Text(diff_text or "(no diff)")
+        return Text(diff_text or "(no diff)", no_wrap=True)
+
+    # bound the parse cost for a pathological single file: a diff line ≈ one output
+    # row, so keep at most ~max_rows*4 input lines (cut without breaking the body)
+    lines = diff_text.splitlines()
+    clipped = len(lines) > max_rows * 4
+    if clipped:
+        diff_text = "\n".join(lines[:max_rows * 4])
 
     # `git show <sha>` prefixes a commit header; start at the first file header
     idx = diff_text.find("diff --git")
@@ -51,43 +61,60 @@ def render_side_by_side(diff_text: str, width: int = 120) -> Text:
     try:
         patch = PatchSet(body)
     except Exception:
-        return Text(diff_text)
+        return Text(diff_text, no_wrap=True)   # unparseable → raw, but no-wrap
     if len(patch) == 0:
-        return Text(diff_text or "(no diff)")
+        return Text(diff_text or "(no diff)", no_wrap=True)
 
     half = max(20, (width - len(DIVIDER)) // 2)
+    full_w = 2 * half + len(DIVIDER)
     out = Text(no_wrap=True)
+    n = 0          # output rows emitted so far
+    done = False   # hit the row cap → stop
 
     for pf in patch:
+        if done:
+            break
         if pf.is_binary_file:
             out.append(f"╭ {pf.path}  (binary)\n", style="bold")
+            n += 1
             continue
         out.append(f"╭ {pf.path}\n", style="bold")
-        full_w = 2 * half + len(DIVIDER)
+        n += 1
         for hunk in pf:
-            # hunk header: a gray band covering the whole row
+            if n >= max_rows:
+                done = True
+                break
             hdr = f"  @@ -{hunk.source_start} +{hunk.target_start} @@"
             out.append(hdr[:full_w].ljust(full_w), style="grey74 on grey27")
             out.append("\n")
+            n += 1
             rem, add = [], []  # (lineno, text)
 
             def flush():
+                nonlocal n
                 for i in range(max(len(rem), len(add))):
                     left = (rem[i][0], "-", rem[i][1], REM_BG) if i < len(rem) else None
                     right = (add[i][0], "+", add[i][1], ADD_BG) if i < len(add) else None
                     _row(out, left, right, half)
+                    n += 1
                 rem.clear()
                 add.clear()
 
             for line in hunk:
+                if n >= max_rows:
+                    done = True
+                    break
                 if line.is_context:
                     flush()
                     v = line.value.rstrip("\n")
                     _row(out, (line.source_line_no, " ", v, ""),
                               (line.target_line_no, " ", v, ""), half)
+                    n += 1
                 elif line.is_removed:
                     rem.append((line.source_line_no, line.value.rstrip("\n")))
                 elif line.is_added:
                     add.append((line.target_line_no, line.value.rstrip("\n")))
             flush()
+    if done or clipped:
+        out.append("  … 已截斷(檔案過大)\n", style="bold yellow")
     return out

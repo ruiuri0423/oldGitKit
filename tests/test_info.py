@@ -97,6 +97,8 @@ class InfoPagingCase(unittest.IsolatedAsyncioTestCase):
             await _settle(app, pilot)
             await self._wait_files(app, pilot)
 
+            app.query_one("#difflist", ListView).focus()  # "/" is scoped to it
+            await pilot.pause(0.05)
             app.action_search_files()                 # "/"
             await pilot.pause(0.1)
             self.assertIsInstance(app.screen, FileSearchModal)

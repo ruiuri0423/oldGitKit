@@ -45,6 +45,7 @@ TREE_PREFETCH = 15    # start loading the next page this many rows from the bott
 INFO_FILE_PAGE = 200  # Info file-list shows a FIXED window of this many files/page
 INFO_DIFF_LINES = 2000  # max diff lines rendered for one file before truncating
 INFO_SEARCH_LIMIT = 100  # max matches shown in the "/" file-search popup
+INFO_SEARCH_DEBOUNCE = 0.18  # wait this long after a keystroke before re-filtering
 
 
 def _fmt_cmd(args) -> str:
@@ -424,6 +425,7 @@ class FileSearchModal(ModalScreen):
     def __init__(self, paths):
         super().__init__()
         self._paths = list(paths)
+        self._filter_timer = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modalbox"):
@@ -455,7 +457,13 @@ class FileSearchModal(ModalScreen):
                          items, 0 if items else None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        self._rebuild(event.value)
+        # debounce: only re-filter once the user pauses, so holding/typing fast
+        # doesn't rebuild the list on every keystroke
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+        q = event.value
+        self._filter_timer = self.set_timer(INFO_SEARCH_DEBOUNCE,
+                                            lambda: self._rebuild(q))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         lv = self.query_one("#opts", ListView)
@@ -836,7 +844,7 @@ class GitkitApp(App):
     #infohdr { height: 1; color: $accent; }
     #inforow { height: 1fr; }
     #difflist { width: 38; border-right: solid $primary; }
-    #diffview { width: 1fr; }
+    #diffview { width: 1fr; overflow-x: auto; }   /* long lines scroll, not wrap */
     #difftext { width: auto; }
     #untracked:focus, #modified:focus, #staged:focus, #tree:focus { border: round $accent; }
     /* the diff file-list only has a right separator; on focus just recolour it,
@@ -1244,14 +1252,13 @@ class GitkitApp(App):
         self.query_one("#difftext", Static).update(Text("\n".join(lines)))
 
     def _info_diff(self, diff_text: str) -> None:
-        # one file's diff can still be huge — cap the rendered lines so a giant
-        # file doesn't freeze rendering (the file list is paged separately)
-        lines = diff_text.splitlines()
-        if len(lines) > INFO_DIFF_LINES:
-            diff_text = "\n".join(lines[:INFO_DIFF_LINES]) + (
-                f"\n… (+{len(lines) - INFO_DIFF_LINES} 行,已截斷 — 單檔過大)")
-        w = max(40, self.size.width - self.query_one("#difflist").size.width - 8)
-        self.query_one("#difftext", Static).update(render_side_by_side(diff_text, w))
+        # width = the actual diff pane (not the whole app) so side-by-side rows fit
+        # and don't bleed; render_side_by_side caps the OUTPUT (keeps it parseable →
+        # still side-by-side even when truncated) and is no-wrap (long lines clip /
+        # scroll horizontally rather than wrapping onto the next line)
+        w = max(40, self.query_one("#diffview").size.width - 2)
+        self.query_one("#difftext", Static).update(
+            render_side_by_side(diff_text, w, max_rows=INFO_DIFF_LINES))
 
     def _fill_difflist(self, rows) -> None:
         # the clear/replace path; also resets the file-paging state
@@ -1306,8 +1313,11 @@ class GitkitApp(App):
 
     # ── file search ("/" in the Info file-list) ──────────────────
     def action_search_files(self) -> None:
-        """'/' opens a filter popup over the current commit's files; picking one
-        jumps the file-list to that file's page and shows its diff."""
+        """'/' — only when the Info file-list is focused: opens a filter popup over
+        the current commit's files; picking one jumps to that file's page and shows
+        its diff. (After a pick the file-list keeps focus, so '/' works again.)"""
+        if getattr(self.focused, "id", None) != "difflist":
+            return
         if not self._info_files:
             self._set_status("⚠ 沒有可搜尋的檔案")
             return
