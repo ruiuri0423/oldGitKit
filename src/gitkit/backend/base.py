@@ -64,7 +64,8 @@ class GitBackend(ABC):
     def status(self) -> list[FileEntry]: ...
 
     @abstractmethod
-    def log(self, *, limit: int = 200, skip: int = 0, all_refs: bool = True) -> list[Commit]: ...
+    def log(self, *, limit: int = 200, skip: int = 0, all_refs: bool = True,
+            order: str = "topo") -> list[Commit]: ...
 
     @abstractmethod
     def branches(self) -> list[BranchInfo]: ...  # local, refs/heads/ (cheap: no ahead/behind)

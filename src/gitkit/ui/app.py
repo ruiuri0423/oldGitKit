@@ -308,22 +308,30 @@ class HelpScreen(ModalScreen):
 
 
 class SettingsScreen(ModalScreen):
-    BINDINGS = [("escape,s", "close", "close"), ("a", "toggle_all", "toggle all-refs")]
+    BINDINGS = [("escape,s", "close", "close"), ("a", "toggle_all", "toggle all-refs"),
+                ("t", "toggle_order", "toggle order")]
 
     def compose(self) -> ComposeResult:
         yield Static(self._text(), id="modalbox")
 
     def _text(self) -> str:
         app = self.app
+        order = "date(時間)" if app._time_order else "topo(拓樸)"
         # \[ escapes the bracket so the key hint isn't parsed as Textual markup
         return (f"[b]Settings[/b]\n\n"
                 f"repo        : {app.repo}\n"
                 f"trunk (col0): {app._trunk_label}\n"
-                f"show all refs: [b]{'on' if app._all_refs else 'off'}[/b]  (git log --all)\n\n"
-                f"\\[a] toggle all-refs     \\[Esc] close")
+                f"show all refs: [b]{'on' if app._all_refs else 'off'}[/b]  (git log --all)\n"
+                f"commit order : [b]{order}[/b]  (git log --topo-order / --date-order)\n\n"
+                f"\\[a] toggle all-refs   \\[t] toggle order   \\[Esc] close")
 
     def action_toggle_all(self) -> None:
         self.app._all_refs = not self.app._all_refs
+        self.app.action_reload()
+        self.query_one("#modalbox", Static).update(self._text())
+
+    def action_toggle_order(self) -> None:
+        self.app._time_order = not self.app._time_order
         self.app.action_reload()
         self.query_one("#modalbox", Static).update(self._text())
 
@@ -1018,6 +1026,7 @@ class GitkitApp(App):
         self.repo = repo
         self._gcache = GraphCache()
         self._all_refs = True
+        self._time_order = False   # False = topo-order; True = date-order (time)
         self._trunk_label = "HEAD"
         self._normal_subtitle = ""
         self._cmd_timer = None
@@ -1174,6 +1183,9 @@ class GitkitApp(App):
     def _load(self) -> None:
         self._apply_load_data(self._fetch_load_data())
 
+    def _log_order(self) -> str:
+        return "date" if self._time_order else "topo"
+
     def _fetch_load_data(self) -> dict:
         """All git reads for a refresh — pure, runs in a worker thread. A full
         refresh resets the Tree to its first page (the cursor returns to the top
@@ -1192,7 +1204,8 @@ class GitkitApp(App):
             "unmerged": bool(be.unmerged_paths()),
             "local_branches": be.branches(),
             "remote_branches": be.remote_branches(),
-            "commits": be.log(limit=self._tree_limit, all_refs=self._all_refs),
+            "commits": be.log(limit=self._tree_limit, all_refs=self._all_refs,
+                               order=self._log_order()),
             "remote_set": be.remote_reachable(),
         }
 
@@ -1299,7 +1312,8 @@ class GitkitApp(App):
         try:
             limit = self._tree_limit
             commits = await asyncio.to_thread(
-                lambda: self.be.log(limit=limit, all_refs=self._all_refs))
+                lambda: self.be.log(limit=limit, all_refs=self._all_refs,
+                                    order=self._log_order()))
             self._tree_has_more = len(commits) >= limit
             # the staged set can't change while merely scrolling, so reuse the
             # count from the last full load (no blocking git call on the loop).

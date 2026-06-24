@@ -107,6 +107,26 @@ class WriteCase(unittest.TestCase):
         self.assertTrue(r.fast_forward)
         self.assertEqual(self.be.current_branch(), "main")
 
+    def test_log_order_param(self):
+        # both orders return the same commit set; date-order sorts by date even
+        # across branches (the later-dated 'feat work' comes before 'main work')
+        def commit_at(msg, date):
+            env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+            subprocess.run(["git", "commit", "-qm", msg], cwd=self.d, check=True,
+                           env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+        self.be.create_branch("feat")
+        self.be.checkout("feat")
+        _write(self.d, "x.txt", "x\n"); _git(self.d, "add", "-A")
+        commit_at("feat work", "2030-01-05T00:00:00")   # LATER date, on feat
+        self.be.checkout("main")
+        _write(self.d, "y.txt", "y\n"); _git(self.d, "add", "-A")
+        commit_at("main work", "2030-01-02T00:00:00")   # EARLIER date, on main
+        topo = [c.subject for c in self.be.log(order="topo")]
+        date = [c.subject for c in self.be.log(order="date")]
+        self.assertEqual(set(topo), set(date))          # same commits either way
+        self.assertLess(date.index("feat work"), date.index("main work"))
+
     def test_branch_without_upstream(self):
         self.be.create_branch("solo")
         b = next(x for x in self.be.branches() if x.name == "solo")

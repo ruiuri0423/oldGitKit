@@ -253,8 +253,13 @@ class CliGitBackend(GitBackend):
         data = self._run(["status", "--porcelain", "-z"])
         return parse_status_z(data)
 
-    def log(self, *, limit: int = 200, skip: int = 0, all_refs: bool = True) -> list[Commit]:
-        args = ["log", "--topo-order", "--decorate=short", f"--format={_LOG_FORMAT}",
+    def log(self, *, limit: int = 200, skip: int = 0, all_refs: bool = True,
+            order: str = "topo") -> list[Commit]:
+        # both orders are topologically valid (parent after child) so the lane
+        # layout still works; 'date' (--date-order) shows newer commits higher even
+        # across branches, 'topo' (--topo-order) keeps each branch's run together.
+        flag = "--date-order" if order == "date" else "--topo-order"
+        args = ["log", flag, "--decorate=short", f"--format={_LOG_FORMAT}",
                 "--date=short", f"-n{limit}"]
         if skip:
             args.append(f"--skip={skip}")
