@@ -8,13 +8,14 @@
 
 # ── colours (only when stderr is a tty) ───────────────────────────────
 if [ -t 2 ]; then
+  # cyan (not blue) for info: dark blue is unreadable on a black terminal.
   GK_C_RED=$'\033[31m'; GK_C_GRN=$'\033[32m'; GK_C_YEL=$'\033[33m'
-  GK_C_BLU=$'\033[34m'; GK_C_DIM=$'\033[2m'; GK_C_OFF=$'\033[0m'
+  GK_C_CYN=$'\033[36m'; GK_C_DIM=$'\033[2m'; GK_C_OFF=$'\033[0m'
 else
-  GK_C_RED=; GK_C_GRN=; GK_C_YEL=; GK_C_BLU=; GK_C_DIM=; GK_C_OFF=
+  GK_C_RED=; GK_C_GRN=; GK_C_YEL=; GK_C_CYN=; GK_C_DIM=; GK_C_OFF=
 fi
 
-gk_info() { printf '%s%s%s\n' "$GK_C_BLU" "$*" "$GK_C_OFF" >&2; }
+gk_info() { printf '%s%s%s\n' "$GK_C_CYN" "$*" "$GK_C_OFF" >&2; }
 gk_ok()   { printf '%s* %s%s\n' "$GK_C_GRN" "$*" "$GK_C_OFF" >&2; }
 gk_warn() { printf '%s! %s%s\n' "$GK_C_YEL" "$*" "$GK_C_OFF" >&2; }
 gk_err()  { printf '%sx %s%s\n' "$GK_C_RED" "$*" "$GK_C_OFF" >&2; }
