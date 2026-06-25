@@ -8,7 +8,10 @@
 # substitution + mapfile, which POSIX /bin/sh does not support).
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 
-set -uo pipefail
+# NOTE: no `set -u`. bash 4.2 (CentOS 7) wrongly reports an empty array
+# expansion `"${arr[@]}"` as an unbound variable under nounset (bug fixed in
+# bash 4.4); this code uses empty arrays everywhere, so nounset is unusable.
+set -o pipefail
 
 # Resolve our own location (follow symlinks) so lib/ is found from anywhere.
 _src="$0"
