@@ -99,20 +99,49 @@ gk_default_remote() {
   printf '%s\n' "${r:-origin}"
 }
 
-# Fills GK_U (untracked), GK_M (modified-unstaged), GK_S (staged).
-# A file can appear in both GK_M and GK_S (partially staged).
+# Map a porcelain XY pair to a single svn-like status letter.
+#   ? untracked · M modified · A added · D deleted · R renamed · C conflict
+gk_svn_code() {
+  case "$1$2" in
+    "??")                         echo "?";;
+    DD|AU|UD|UA|DU|AA|UU)         echo "C";;          # unmerged / conflict
+    *) if   [ "$1" != " " ] && [ "$1" != "?" ]; then echo "$1"
+       elif [ "$2" != " " ];                     then echo "$2"
+       else echo " "; fi;;
+  esac
+}
+
+# Print a clean, svn-like status: one "<CODE>\t<path>" line per change, the same
+# shape as `gitkit log`. $1 = "no" hides untracked (for `st -uq`).
+gk_print_status() {
+  local hide_untracked="${1:-}" line x y path code
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    x="${line:0:1}"; y="${line:1:1}"; path="${line:3}"
+    case "$path" in *" -> "*) path="${path##* -> }";; esac
+    code="$(gk_svn_code "$x" "$y")"
+    [ "$code" = "?" ] && [ "$hide_untracked" = "no" ] && continue
+    printf '%s\t%s\n' "$code" "$path"
+  done < <(gk_git status --porcelain)
+}
+
+# Fills GK_U (untracked) and parallel GK_M/GK_Mc (modified-unstaged + code),
+# GK_S/GK_Sc (staged + code). A file can appear in both GK_M and GK_S.
 gk_collect_status() {
-  GK_U=(); GK_M=(); GK_S=()
+  GK_U=(); GK_M=(); GK_Mc=(); GK_S=(); GK_Sc=()
   local line x y path
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     x="${line:0:1}"; y="${line:1:1}"; path="${line:3}"
     if [ "$x" = "?" ]; then GK_U+=("$path"); continue; fi
     case "$path" in *" -> "*) path="${path##* -> }";; esac   # rename: keep new name
-    case "$y" in M|D) GK_M+=("$path");; esac
-    case "$x" in M|A|D|R|C) GK_S+=("$path");; esac
+    case "$y" in M|D) GK_M+=("$path"); GK_Mc+=("$y");; esac
+    case "$x" in M|A|D|R|C) GK_S+=("$path"); GK_Sc+=("$x");; esac
   done < <(gk_git status --porcelain)
 }
+
+# Build an svn-like menu label: "<CODE><tab><path>".
+gk_lbl() { printf '%s\t%s' "$1" "$2"; }
 
 # gk_pick_branch PROMPT  → sets GK_BR_KIND (L|R), GK_BR_REF, GK_BR_REMOTE
 gk_pick_branch() {

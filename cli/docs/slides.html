@@ -120,18 +120,20 @@
 
 <!-- 3 st -->
 <section class="slide center">
-  <h2>gitkit st <span class="sub">— 看狀態</span></h2>
-  <p class="hint">最薄的一層,直接轉呼叫 <code>git status</code>。</p>
-  <div class="pipe" style="max-width:880px">
+  <h2>gitkit st <span class="sub">— svn-like 狀態</span></h2>
+  <p class="hint">用 <code>git status --porcelain</code> 收集,再印成
+     <b>每行「狀態字母 + Tab + 路徑」</b>,和 <code>gitkit log</code> 同一個格式。</p>
+  <div class="cmd" style="max-width:760px"><span class="c"># gitkit st</span>
+M	verilog/src/top/pos_new.v
+A	src/new_module.v
+?	scratch/tmp.log         <span class="c"># ? = 未追蹤(untracked)</span></div>
+  <div class="pipe" style="max-width:880px;margin-top:10px">
     <div class="st"><span class="n">1</span><div class="d">
-      <div class="lab"><b>gitkit st</b> — 完整狀態</div>
-      <div class="cmd"><span class="g">git</span> status</div></div></div>
+      <div class="lab"><b>gitkit st</b> — 全部變更(svn 風格單一字母 M/A/D/?/C)</div></div></div>
     <div class="st"><span class="n">2</span><div class="d">
-      <div class="lab"><b>gitkit st -uq</b> — 只看已修改 / 已暫存(隱藏未追蹤)</div>
-      <div class="cmd"><span class="g">git</span> status <span class="o">-uno</span>
-        <span class="c"># u-no = untracked files: no</span></div></div></div>
+      <div class="lab"><b>gitkit st -uq</b> — 隱藏未追蹤(只看已修改 / 已暫存)</div></div></div>
   </div>
-  <div class="note">其他參數會原樣轉給 <code>git status</code>,例如 <code>gitkit st -s</code> → <code>git status -s</code>。</div>
+  <div class="note">其他參數原樣轉給 <code>git status</code>,例如 <code>gitkit st -s</code>。</div>
 </section>
 
 <!-- 4 ci part 1 -->
@@ -142,8 +144,8 @@
       <div class="lab">收集工作區狀態,分成 U / M / S 三類</div>
       <div class="cmd"><span class="g">git</span> status <span class="o">--porcelain</span></div></div></div>
     <div class="st"><span class="n">2</span><div class="d">
-      <div class="lab">選單挑出要提交的檔 → <b>add</b></div>
-      <div class="cmd"><span class="g">git</span> add <span class="o">-- &lt;選到的檔案&gt;</span></div></div></div>
+      <div class="lab">選單挑出要提交的檔 → <b>add</b>(或 <code>gitkit ci &lt;path&gt;</code> 直接指定、跳過選單)</div>
+      <div class="cmd"><span class="g">git</span> add <span class="o">-- &lt;選到的檔案 / 指定的 path&gt;</span></div></div></div>
     <div class="st"><span class="n">3</span><div class="d">
       <div class="lab">確認暫存區有東西 → 輸入訊息 <b>commit</b></div>
       <div class="cmd"><span class="g">git</span> diff <span class="o">--cached --quiet</span>   <span class="c"># 有暫存才提交</span>
@@ -238,6 +240,10 @@ awk … f &gt; tmp &amp;&amp; mv tmp f &amp;&amp; <span class="g">git</span> add
       <div class="lab">已修改的檔(M)→ 比對「工作區 vs 暫存區」</div>
       <div class="cmd"><span class="g">git</span> difftool <span class="o">-- &lt;file&gt;</span></div></div></div>
   </div>
+  <div class="cmd" style="max-width:1000px;margin-top:10px"><span class="c"># 指定 commit / 檔案(svn diff -r 的對應)</span>
+gitkit diff <span class="o">-uq</span>                 <span class="c"># 選單只列已修改</span>
+gitkit diff <span class="o">&lt;commit&gt; [path]</span>      → <span class="g">git</span> difftool &lt;commit&gt; -- &lt;path&gt;   <span class="c"># 工作區 vs commit</span>
+gitkit diff <span class="o">&lt;A&gt; &lt;B&gt; [path]</span>       → <span class="g">git</span> difftool &lt;A&gt; &lt;B&gt; -- &lt;path&gt;     <span class="c"># 兩個 commit 比較</span></div>
   <div class="note">未追蹤檔(U)沒有前一版本,會被略過。先設定:<code>git config diff.tool &lt;tool&gt;</code>。</div>
 </section>
 
@@ -303,13 +309,14 @@ gitkit log <span class="o">[limit] [path]</span>   <span class="c"># → git log
   <h2>整體對照 <span class="sub">— 全部用到的原生 git</span></h2>
   <table>
     <tr><th>gitkit</th><th>原生 git 流程</th></tr>
-    <tr><td><span class="tag">st</span></td><td><code>status</code> / <code>status -uno</code></td></tr>
-    <tr><td><span class="tag">ci</span></td><td><code>status --porcelain</code> → <code>add</code> → <code>commit</code> →
+    <tr><td><span class="tag">st</span></td><td><code>status --porcelain</code> → 印成 <code>&lt;CODE&gt;\t&lt;path&gt;</code>(svn-like;<code>-uq</code> 隱藏未追蹤)</td></tr>
+    <tr><td><span class="tag">ci</span></td><td><code>status --porcelain</code> → <code>add</code>(或指定 path)→ <code>commit</code> →
       <code>branch</code>/<code>branch -r</code> → <code>stash</code> → <code>fetch</code> →
       <code>merge</code> → <code>stash pop</code> → <code>push HEAD:&lt;b&gt;</code></td></tr>
     <tr><td><span class="tag">up</span></td><td><code>rev-parse @{upstream}</code> → <code>stash</code> →
       <code>fetch</code> → <code>merge</code> → <code>stash pop</code></td></tr>
-    <tr><td><span class="tag">diff</span></td><td><code>status --porcelain</code> → <code>difftool [--cached] -- &lt;f&gt;</code></td></tr>
+    <tr><td><span class="tag">diff</span></td><td><code>status --porcelain</code> → <code>difftool [--cached] -- &lt;f&gt;</code> ·
+      指定 commit:<code>difftool &lt;commit&gt; [&lt;B&gt;] -- &lt;f&gt;</code></td></tr>
     <tr><td><span class="tag">reset</span></td><td><code>reset HEAD -- &lt;f&gt;</code> · <code>log --oneline</code> → <code>reset --soft/--mixed/--hard</code></td></tr>
     <tr><td><span class="tag">exp</span></td><td><code>cat-file -t</code> → <code>archive --format=zip HEAD:&lt;p&gt;</code> + unzip · 單檔 <code>show</code></td></tr>
     <tr><td><span class="tag">log</span></td><td><code>log --name-status -n &lt;N&gt; -- &lt;file&gt;</code>(= <code>svn log -v</code>)</td></tr>

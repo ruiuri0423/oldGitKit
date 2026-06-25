@@ -209,6 +209,57 @@ else
   ok "exp skipped (no unzip)"
 fi
 
+echo "== gitkit st (svn-like format) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo a > a.txt; git add a.txt; git commit -qm init
+  echo b >> a.txt; echo n > untr.txt; echo s > st.txt; git add st.txt
+  out="$("$GITKIT" st </dev/null 2>&1)"
+  # svn-like single-letter code + tab + path
+  printf '%s\n' "$out" | grep -qE '^M	a\.txt$'   && ok "M<tab>a.txt"     || bad "M line (got: $out)"
+  printf '%s\n' "$out" | grep -qE '^A	st\.txt$'  && ok "A<tab>st.txt"    || bad "A line"
+  printf '%s\n' "$out" | grep -qE '^\?	untr\.txt$' && ok "?<tab>untr.txt" || bad "? line"
+)
+
+echo "== gitkit ci <path> (stage given path, skip menu) =="
+(
+  d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  echo a > a.txt; echo b > b.txt; git add a.txt b.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  echo a2 >> a.txt; echo b2 >> b.txt        # both modified
+  # ci a.txt -> stage only a.txt (no menu); msg; branch origin/main=2; push y
+  printf 'edit a\n2\ny\n' | "$GITKIT" ci a.txt >/dev/null 2>&1
+  check "committed message"      "$(git log -1 --format=%s)" "edit a"
+  check "commit has a.txt"       "$(git show --name-only --format= HEAD | grep -c '^a.txt$')" "1"
+  check "commit excludes b.txt"  "$(git show --name-only --format= HEAD | grep -c '^b.txt$')" "0"
+  check "b.txt still modified"   "$(git status --porcelain b.txt | cut -c1-2)" " M"
+)
+
+echo "== gitkit diff -uq (menu lists modified only) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo a > a.txt; git add a.txt; git commit -qm init
+  echo a2 >> a.txt; echo u > u.txt; echo s > s.txt; git add s.txt
+  out="$(printf '\n' | "$GITKIT" diff -uq 2>&1)"   # Enter cancels selection
+  case "$out" in *a.txt*) ok "lists modified a.txt";; *) bad "a.txt missing (got: $out)";; esac
+  case "$out" in *u.txt*) bad "-uq should hide untracked";; *) ok "hides untracked";; esac
+  case "$out" in *s.txt*) bad "-uq should hide staged";; *) ok "hides staged";; esac
+)
+
+echo "== gitkit diff <commit> <file> (commit mode via difftool) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo v1 > a.txt; git add a.txt; git commit -qm c1
+  c1="$(git rev-parse HEAD)"
+  echo v2 > a.txt; git commit -qam c2
+  git config diff.tool dummy
+  git config difftool.dummy.cmd 'printf ran >> ranlog.txt'
+  git config difftool.prompt false
+  "$GITKIT" diff "$c1" a.txt </dev/null >/dev/null 2>&1
+  check "difftool invoked (working vs commit)" "$([ -s ranlog.txt ] && echo yes || echo no)" "yes"
+)
+
 echo "== gitkit log (file history with changed paths) =="
 (
   d="$(newrepo)"; cd "$d"

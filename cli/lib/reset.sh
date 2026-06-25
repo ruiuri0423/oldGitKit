@@ -19,9 +19,13 @@ gk_reset_unstage() {
     gk_info "no staged files"
     return 0
   fi
-  gk_menu_multi "Select files to unstage" "${GK_S[@]}" || { gk_warn "cancelled"; return 1; }
-  gk_git reset -q HEAD -- "${GK_PICKS[@]}" \
-    && gk_ok "unstaged ${#GK_PICKS[@]} file(s)"
+  local labels=() i
+  for i in "${!GK_S[@]}"; do labels+=("$(gk_lbl "${GK_Sc[$i]}" "${GK_S[$i]}")"); done
+  gk_menu_multi "Select files to unstage" "${labels[@]}" || { gk_warn "cancelled"; return 1; }
+  local sel=()
+  for i in "${GK_PICK_IDXS[@]}"; do sel+=("${GK_S[$i]}"); done
+  gk_git reset -q HEAD -- "${sel[@]}" \
+    && gk_ok "unstaged ${#sel[@]} file(s)"
 }
 
 gk_reset_commit() {

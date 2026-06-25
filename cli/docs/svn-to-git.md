@@ -43,13 +43,14 @@ gitkit log [limit] <file>      # default limit 20; either arg order works
 |-----|-----|--------|
 | `svn checkout URL`          | `git clone URL`                                   | — |
 | `svn update`               | `git pull` (= `fetch` + `merge`)                  | `gitkit up` |
-| `svn status`               | `git status`                                      | `gitkit st` |
+| `svn status`               | `git status`                                      | `gitkit st` (svn-like) |
 | `svn status -q`            | `git status -uno` (hide untracked)                | `gitkit st -uq` |
-| `svn add <f>`              | `git add <f>`                                     | `gitkit ci` (select) |
+| `svn add <f>`              | `git add <f>`                                     | `gitkit ci <f>` |
 | `svn delete <f>`          | `git rm <f>`                                       | — |
-| `svn commit -m "msg"`      | `git commit -m "msg"` **+** `git push`            | `gitkit ci` |
+| `svn commit <f> -m "msg"`  | `git commit -m "msg"` **+** `git push`            | `gitkit ci <f>` |
 | `svn diff`                 | `git diff` / `git difftool`                       | `gitkit diff` |
-| `svn diff -r A:B <f>`      | `git diff A..B -- <f>`                             | — |
+| `svn diff -r REV <f>`      | `git diff REV -- <f>`                             | `gitkit diff REV <f>` |
+| `svn diff -r A:B <f>`      | `git diff A..B -- <f>`                             | `gitkit diff A B <f>` |
 | `svn log`                  | `git log`                                          | `gitkit log` |
 | `svn log -v <f>`           | `git log --name-status -- <f>`                    | `gitkit log <f>` |
 | `svn log -l N`             | `git log -n N`                                     | `gitkit log N <f>` |
