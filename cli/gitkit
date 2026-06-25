@@ -29,6 +29,7 @@ GK_LIB="$GK_HOME/lib"
 . "$GK_LIB/diff.sh"
 . "$GK_LIB/reset.sh"
 . "$GK_LIB/exp.sh"
+. "$GK_LIB/log.sh"
 
 gk_usage() {
   cat >&2 <<'EOF'
@@ -46,6 +47,8 @@ Usage: gitkit <command>
   reset   unstage files, or reset the branch to a commit (soft/mixed/hard)
   exp     export a tracked folder without .git: `gitkit exp <path> [dest]`
           (git archive HEAD <path> -> unzip into dest/<path>)
+  log     history with changed paths (svn log -v style):
+          `gitkit log [path] [limit]`  ->  git log --name-status
 
 Conflict options: tf=their full  mf=mine full  tc=their conflict  mc=mine conflict
                   e=edit(git mergetool)  r=resolved  a=abort
@@ -62,6 +65,7 @@ main() {
     diff)  gk_cmd_diff "$@";;
     reset) gk_cmd_reset "$@";;
     exp)   gk_cmd_exp "$@";;
+    log)   gk_cmd_log "$@";;
     ""|-h|--help|help) gk_usage;;
     *) gk_err "未知指令: $cmd"; gk_usage; exit 2;;
   esac

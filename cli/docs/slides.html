@@ -108,6 +108,7 @@
     <div><span class="tag">gitkit diff</span> → git difftool</div>
     <div><span class="tag">gitkit reset</span> → git reset</div>
     <div><span class="tag">gitkit exp</span> → git archive / git show</div>
+    <div><span class="tag">gitkit log</span> → git log --name-status</div>
   </div>
   <div class="note" style="margin-top:18px">輔助讀取(唯讀,挑選用):
     <code>git status --porcelain</code> ·
@@ -276,7 +277,28 @@ unzip -o -q tmp.zip -d <span class="o">&lt;dest&gt;</span>  &amp;&amp;  rm tmp.z
   <div class="note">用 <code>HEAD:&lt;path&gt;</code> 當 archive 的根,所以解出來直接是內容,<b>不會多一層 <code>&lt;path&gt;/</code></b>。</div>
 </section>
 
-<!-- 11 summary -->
+<!-- 11 log / svn mapping -->
+<section class="slide center">
+  <h2>gitkit log <span class="sub">— SVN 使用者看這裡</span></h2>
+  <p class="hint"><code>svn log -v</code> 的 git 版:每筆 commit 附上動到的檔案(A/M/D)。</p>
+  <table>
+    <tr><th>svn</th><th>意義</th><th>git</th></tr>
+    <tr><td><span class="tag">log</span></td><td>看歷史</td><td><code>git log</code></td></tr>
+    <tr><td><span class="tag">-v</span></td><td>列出變更的路徑</td><td><code>--name-status</code></td></tr>
+    <tr><td><span class="tag">-r A:B</span></td><td>限定版本範圍</td><td><code>A..B</code>(commit 範圍)</td></tr>
+    <tr><td><span class="tag">-l N</span></td><td>只取 N 筆</td><td><code>-n N</code></td></tr>
+    <tr><td><span class="tag">&lt;file&gt;</span></td><td>只看這個檔</td><td><code>-- &lt;file&gt;</code></td></tr>
+  </table>
+  <div class="cmd" style="max-width:1000px;margin-top:12px"><span class="c"># svn log -v -r A:B -l N &lt;file&gt;  等於</span>
+<span class="g">git</span> log <span class="o">--name-status A..B -n N -- &lt;file&gt;</span>
+<span class="c"># 日常：某檔的詳細歷史</span>
+gitkit log <span class="o">&lt;file&gt; [limit]</span>   <span class="c"># → git log --name-status -- &lt;file&gt;(預設 20 筆)</span></div>
+  <div class="note">SVN 的 <code>rNNN</code> 是全域整數;git 沒有,改用 commit SHA 或範圍
+     <code>A..B</code> / <code>HEAD~5..HEAD</code> / <code>--since=2026-01-01</code>。
+     完整對照見 <code>cli/docs/svn-to-git.md</code>。</div>
+</section>
+
+<!-- 12 summary -->
 <section class="slide center">
   <h2>整體對照 <span class="sub">— 全部用到的原生 git</span></h2>
   <table>
@@ -290,6 +312,7 @@ unzip -o -q tmp.zip -d <span class="o">&lt;dest&gt;</span>  &amp;&amp;  rm tmp.z
     <tr><td><span class="tag">diff</span></td><td><code>status --porcelain</code> → <code>difftool [--cached] -- &lt;f&gt;</code></td></tr>
     <tr><td><span class="tag">reset</span></td><td><code>reset HEAD -- &lt;f&gt;</code> · <code>log --oneline</code> → <code>reset --soft/--mixed/--hard</code></td></tr>
     <tr><td><span class="tag">exp</span></td><td><code>cat-file -t</code> → <code>archive --format=zip HEAD:&lt;p&gt;</code> + unzip · 單檔 <code>show</code></td></tr>
+    <tr><td><span class="tag">log</span></td><td><code>log --name-status -n &lt;N&gt; -- &lt;file&gt;</code>(= <code>svn log -v</code>)</td></tr>
     <tr><td><span class="tag">衝突</span></td><td><code>diff --diff-filter=U</code> · <code>checkout --ours/--theirs</code> ·
       <code>mergetool</code> · <code>merge --abort</code> · <code>commit --no-edit</code></td></tr>
   </table>

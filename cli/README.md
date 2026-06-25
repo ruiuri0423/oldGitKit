@@ -13,6 +13,9 @@ porcelain v2, no exotic plumbing).
 native git flow behind it. Open the HTML in a browser (arrow keys to navigate)
 or read the PDF.
 
+**SVN users:** [`docs/svn-to-git.md`](docs/svn-to-git.md) maps common SVN
+commands (including `svn log -v -r -l <file>`) to git and the `gitkit` shortcuts.
+
 ## Install
 
 ```sh
@@ -33,6 +36,7 @@ the symlink works from anywhere.
 | `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked files are skipped). |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
 | `gitkit exp`   | export a tracked folder/file **without** `.git`: `gitkit exp <path> [dest]`. The folder's contents land **flat** in `<dest>` (not nested under `<path>`), via `git archive HEAD:<path>` → `unzip` (a single file is written with `git show`). When `<dest>` is omitted it is built from `<path>` by appending `_exp` (e.g. `src/app` → `src/app_exp`). Folders require `unzip`. |
+| `gitkit log`   | history with changed paths (the `svn log -v` equivalent): `gitkit log [path] [limit]` → `git log --name-status`. With a `path` it shows just that file's history; `limit` defaults to 20. |
 
 ### `gitkit ci`
 
