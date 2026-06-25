@@ -8,6 +8,11 @@ Targets **git 1.8.3.1 / bash 4.2 on CentOS 7** (air-gapped, no root): zero
 external dependencies, plain everyday git commands only (no `git -C`, no
 porcelain v2, no exotic plumbing).
 
+**Slides:** [`docs/slides.html`](docs/slides.html) (and a print of it in
+[`docs/slides.pdf`](docs/slides.pdf)) walk through each command and the exact
+native git flow behind it. Open the HTML in a browser (arrow keys to navigate)
+or read the PDF.
+
 ## Install
 
 ```sh

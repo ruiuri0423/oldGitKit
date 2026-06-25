@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitkit CLI — 每個指令背後的原生 git 流程</title>
+<style>
+  :root { --bg:#0d1117; --fg:#c9d1d9; --dim:#8b949e; --accent:#fea62b;
+          --line:#30363d; --good:#3fb950; --info:#36c5d6; --warn:#d29922;
+          --red:#f85149; --mono:Consolas,"Cascadia Mono",monospace; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; }
+  #bar { position:fixed; top:0; left:0; right:0; height:46px; display:flex;
+    align-items:center; justify-content:space-between; padding:0 20px;
+    border-bottom:1px solid var(--line); background:#161b22; z-index:10; }
+  #bar .t { font-weight:600; color:var(--accent); font-size:17px; }
+  #bar .c { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .slide { display:none; position:fixed; top:46px; bottom:40px; left:0; right:0;
+    padding:14px 34px; overflow:auto; flex-direction:column; align-items:center; }
+  .slide.on { display:flex; }
+  h1 { font-size:40px; margin:.15em 0; text-align:center; }
+  h2 { font-size:27px; color:var(--accent); margin:.1em 0 .3em; text-align:center; }
+  h2 .sub { color:var(--dim); font-size:18px; font-weight:400; }
+  p,li { font-size:18px; line-height:1.5; }
+  .hint { color:var(--dim); font-size:16px; margin:2px 0 10px; max-width:1100px;
+    text-align:center; line-height:1.5; }
+  .sub { color:var(--dim); }
+  code { background:#161b22; padding:2px 8px; border-radius:5px; font-family:var(--mono); }
+  kbd { background:#21262d; border:1px solid var(--line); border-radius:5px;
+    padding:1px 9px; font-family:var(--mono); color:#e6edf3; }
+  .center { justify-content:center; text-align:center; }
+  /* command block */
+  .cmd { font-family:var(--mono); font-size:16px; background:#0a0e14;
+    border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:6px; padding:5px 12px; color:#e6edf3; white-space:pre-wrap;
+    display:block; margin:3px 0; }
+  .cmd .c { color:var(--dim); }                 /* comment   */
+  .cmd .g { color:var(--good); }                /* git verb  */
+  .cmd .o { color:var(--info); }                /* operand   */
+  /* vertical pipeline of numbered steps */
+  .pipe { display:flex; flex-direction:column; gap:8px; width:100%; max-width:1080px; }
+  .st { display:flex; gap:14px; align-items:flex-start; }
+  .st .n { flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+    background:var(--accent); color:#0d1117; font-weight:700; font-size:15px;
+    display:inline-flex; align-items:center; justify-content:center; margin-top:3px; }
+  .st .d { flex:1; }
+  .st .d .lab { font-size:17px; font-weight:600; }
+  .st .d .lab b { color:var(--accent); }
+  .small .cmd { font-size:14.5px; padding:3px 10px; }
+  .small .st .d .lab { font-size:15.5px; }
+  .small .pipe { gap:5px; }
+  /* tables */
+  table { border-collapse:collapse; font-size:16px; max-width:1120px; }
+  td,th { border:1px solid var(--line); padding:6px 13px; text-align:left; vertical-align:top; }
+  th { color:var(--accent); }
+  td .cmd { margin:0; font-size:14.5px; border-left-width:2px; }
+  .tag { font-family:var(--mono); padding:1px 7px; border-radius:4px;
+    background:#21262d; border:1px solid var(--line); font-size:14.5px; }
+  .cmdlist { columns:2; column-gap:40px; font-family:var(--mono); font-size:16px;
+    max-width:1000px; line-height:1.9; }
+  .note { font-size:15.5px; color:var(--dim); max-width:1080px; margin-top:8px;
+    border:1px solid var(--line); border-radius:8px; padding:8px 16px; background:#161b22; }
+  .note b { color:var(--accent); }
+  ul.flat { list-style:none; padding:0; margin:.3em 0; }
+  ul.flat li { margin:4px 0; }
+  #nav { position:fixed; bottom:0; left:0; right:0; height:40px; display:flex;
+    align-items:center; justify-content:center; gap:16px; border-top:1px solid var(--line);
+    background:#161b22; color:var(--dim); font-size:14px; }
+  #nav button { background:#21262d; color:var(--fg); border:1px solid var(--line);
+    border-radius:6px; padding:3px 14px; cursor:pointer; }
+  @media print {
+    @page { size:landscape; margin:10mm; }
+    html,body { background:#fff; color:#111; height:auto; }
+    #bar,#nav { display:none; }
+    .slide { display:flex !important; position:static; height:auto; min-height:92vh;
+      page-break-after:always; border-bottom:none; }
+    .cmd { background:#f3f4f6; color:#111; }
+    .cmd .g{color:#1a7f37;} .cmd .o{color:#0969da;} .cmd .c{color:#6e7781;}
+    .note,code,kbd,.tag { background:#f3f4f6; }
+    h2,th,.st .d .lab b { color:#9a6700; }
+  }
+</style>
+</head>
+<body>
+<div id="bar"><span class="t">gitkit CLI — 原生 git 流程</span><span class="c" id="ctr"></span></div>
+
+<!-- 1 title -->
+<section class="slide center">
+  <h1>gitkit CLI</h1>
+  <p>純 bash 小工具,每個指令其實只是<b style="color:var(--accent)">幾個日常 git 指令的組合</b>。</p>
+  <p class="sub">這份投影片把 <code>st · ci · up · diff · reset · exp</code>
+     背後實際跑的原生 git 流程一頁一頁攤開。</p>
+  <p class="sub">目標環境:CentOS 7 · git <b style="color:var(--accent)">1.8.3.1</b> · bash 4.2 · 不需 root</p>
+  <p class="sub" style="margin-top:18px">翻頁 <kbd>→</kbd><kbd>←</kbd> / <kbd>空白鍵</kbd> ·
+     列印成 PDF:瀏覽器 <kbd>Ctrl</kbd>+<kbd>P</kbd></p>
+</section>
+
+<!-- 2 principle -->
+<section class="slide center">
+  <h2>設計原則 — 只用「看得懂的」原生 git</h2>
+  <p class="hint">沒有自創魔法。每個 gitkit 指令 = 收集狀態 → 選單挑選 → 跑標準 git。
+     全部指令在 git 1.8.3.1 都存在,不用任何冷僻 plumbing。</p>
+  <div class="cmdlist">
+    <div><span class="tag">gitkit st</span> → git status</div>
+    <div><span class="tag">gitkit ci</span> → add · commit · fetch · merge · push</div>
+    <div><span class="tag">gitkit up</span> → stash · fetch · merge · stash pop</div>
+    <div><span class="tag">gitkit diff</span> → git difftool</div>
+    <div><span class="tag">gitkit reset</span> → git reset</div>
+    <div><span class="tag">gitkit exp</span> → git archive / git show</div>
+  </div>
+  <div class="note" style="margin-top:18px">輔助讀取(唯讀,挑選用):
+    <code>git status --porcelain</code> ·
+    <code>git branch / branch -r</code> ·
+    <code>git log --oneline</code> ·
+    <code>git symbolic-ref --short HEAD</code> ·
+    <code>git rev-parse @{upstream}</code></div>
+</section>
+
+<!-- 3 st -->
+<section class="slide center">
+  <h2>gitkit st <span class="sub">— 看狀態</span></h2>
+  <p class="hint">最薄的一層,直接轉呼叫 <code>git status</code>。</p>
+  <div class="pipe" style="max-width:880px">
+    <div class="st"><span class="n">1</span><div class="d">
+      <div class="lab"><b>gitkit st</b> — 完整狀態</div>
+      <div class="cmd"><span class="g">git</span> status</div></div></div>
+    <div class="st"><span class="n">2</span><div class="d">
+      <div class="lab"><b>gitkit st -uq</b> — 只看已修改 / 已暫存(隱藏未追蹤)</div>
+      <div class="cmd"><span class="g">git</span> status <span class="o">-uno</span>
+        <span class="c"># u-no = untracked files: no</span></div></div></div>
+  </div>
+  <div class="note">其他參數會原樣轉給 <code>git status</code>,例如 <code>gitkit st -s</code> → <code>git status -s</code>。</div>
+</section>
+
+<!-- 4 ci part 1 -->
+<section class="slide">
+  <h2>gitkit ci <span class="sub">— ① 挑檔 → 提交 → 選分支</span></h2>
+  <div class="pipe small">
+    <div class="st"><span class="n">1</span><div class="d">
+      <div class="lab">收集工作區狀態,分成 U / M / S 三類</div>
+      <div class="cmd"><span class="g">git</span> status <span class="o">--porcelain</span></div></div></div>
+    <div class="st"><span class="n">2</span><div class="d">
+      <div class="lab">選單挑出要提交的檔 → <b>add</b></div>
+      <div class="cmd"><span class="g">git</span> add <span class="o">-- &lt;選到的檔案&gt;</span></div></div></div>
+    <div class="st"><span class="n">3</span><div class="d">
+      <div class="lab">確認暫存區有東西 → 輸入訊息 <b>commit</b></div>
+      <div class="cmd"><span class="g">git</span> diff <span class="o">--cached --quiet</span>   <span class="c"># 有暫存才提交</span>
+<span class="g">git</span> commit <span class="o">-m "&lt;訊息&gt;"</span></div></div></div>
+    <div class="st"><span class="n">4</span><div class="d">
+      <div class="lab">列出本地 + 遠端分支,挑「要整合並推送到」哪一支</div>
+      <div class="cmd"><span class="g">git</span> branch        <span class="c"># 本地</span>
+<span class="g">git</span> branch <span class="o">-r</span>     <span class="c"># 遠端</span></div></div></div>
+  </div>
+  <div class="note">沒有任何變更時 → 顯示 <code>No changes to commit</code>,並詢問是否仍要同步+推送。</div>
+</section>
+
+<!-- 5 ci part 2 -->
+<section class="slide">
+  <h2>gitkit ci <span class="sub">— ② 暫存 → 整合 → 推送</span></h2>
+  <div class="pipe small">
+    <div class="st"><span class="n">5</span><div class="d">
+      <div class="lab">若工作區還有沒選到的修改 → 先 <b>stash</b> 收起來(保持合併乾淨)</div>
+      <div class="cmd"><span class="g">git</span> diff <span class="o">--quiet</span>   <span class="c"># 髒的話 ↓</span>
+<span class="g">git</span> stash</div></div></div>
+    <div class="st"><span class="n">6</span><div class="d">
+      <div class="lab">取回遠端,把選定分支<b>併進</b>當前分支</div>
+      <div class="cmd"><span class="g">git</span> fetch <span class="o">&lt;remote&gt;</span>          <span class="c"># 抓全部 ref(1.8.3.1 才會更新 origin/*)</span>
+<span class="g">git</span> merge <span class="o">--no-edit &lt;branch&gt;</span></div></div></div>
+    <div class="st"><span class="n">7</span><div class="d">
+      <div class="lab">把剛剛 stash 的修改<b>還原</b>回來</div>
+      <div class="cmd"><span class="g">git</span> stash pop</div></div></div>
+    <div class="st"><span class="n">8</span><div class="d">
+      <div class="lab">確認後,把當前 HEAD <b>推送</b>到選定分支</div>
+      <div class="cmd"><span class="g">git</span> push <span class="o">&lt;remote&gt; HEAD:&lt;branch&gt;</span></div></div></div>
+  </div>
+  <div class="note">第 6 步的 merge、第 7 步的 stash pop,任一發生衝突 → 進入下一頁的<b>衝突處理迴圈</b>。</div>
+</section>
+
+<!-- 6 conflict loop -->
+<section class="slide center">
+  <h2>衝突處理 <span class="sub">— 七個選項各對應什麼 git</span></h2>
+  <p class="hint">先用 <code>git diff --name-only --diff-filter=U</code> 找出所有衝突檔,再對全部套用你選的處理:</p>
+  <table>
+    <tr><th>選項</th><th>意義</th><th>底層 git</th></tr>
+    <tr><td><span class="tag">tf</span></td><td>their full — 整檔用對方版</td>
+      <td><div class="cmd"><span class="g">git</span> checkout --theirs -- f &amp;&amp; <span class="g">git</span> add -- f</div></td></tr>
+    <tr><td><span class="tag">mf</span></td><td>mine full — 整檔用我方版</td>
+      <td><div class="cmd"><span class="g">git</span> checkout --ours -- f &amp;&amp; <span class="g">git</span> add -- f</div></td></tr>
+    <tr><td><span class="tag">tc</span> / <span class="tag">mc</span></td><td>只在衝突區塊取一側<br>(保留自動合併的部分,支援 diff3)</td>
+      <td><div class="cmd"><span class="c"># awk 解析 &lt;&lt;&lt; === &gt;&gt;&gt; 標記</span>
+awk … f &gt; tmp &amp;&amp; mv tmp f &amp;&amp; <span class="g">git</span> add -- f</div></td></tr>
+    <tr><td><span class="tag">e</span></td><td>edit — 開你設定的 mergetool</td>
+      <td><div class="cmd"><span class="g">git</span> mergetool</div></td></tr>
+    <tr><td><span class="tag">r</span></td><td>resolved — 標記為已解決</td>
+      <td><div class="cmd"><span class="g">git</span> add -- f   <span class="c"># 仍含標記者會擋下</span></div></td></tr>
+    <tr><td><span class="tag">a</span></td><td>abort — 放棄</td>
+      <td><div class="cmd"><span class="g">git</span> merge --abort   <span class="c"># stash 情境則 git reset --hard HEAD</span></div></td></tr>
+  </table>
+  <div class="note">全部解完 → merge 情境補一筆 <code>git commit --no-edit</code>;stash 情境則 <code>git stash drop</code>。</div>
+</section>
+
+<!-- 7 up -->
+<section class="slide center">
+  <h2>gitkit up <span class="sub">— 只同步,不提交/不推送</span></h2>
+  <p class="hint">把當前分支更新到它的 upstream。就是 ci 的「stash → 整合 → 還原」那一段。</p>
+  <div class="pipe" style="max-width:980px">
+    <div class="st"><span class="n">1</span><div class="d">
+      <div class="lab">找出當前分支的 upstream</div>
+      <div class="cmd"><span class="g">git</span> symbolic-ref --short -q HEAD       <span class="c"># 當前分支</span>
+<span class="g">git</span> rev-parse --abbrev-ref <span class="o">@{upstream}</span>   <span class="c"># 對應遠端(沒有就報錯)</span></div></div></div>
+    <div class="st"><span class="n">2</span><div class="d">
+      <div class="lab">有修改 → 先 stash</div>
+      <div class="cmd"><span class="g">git</span> stash   <span class="c"># 若 git diff --quiet 為髒</span></div></div></div>
+    <div class="st"><span class="n">3</span><div class="d">
+      <div class="lab">取回 + 併入 upstream(衝突 → 衝突處理迴圈)</div>
+      <div class="cmd"><span class="g">git</span> fetch <span class="o">&lt;remote&gt;</span>
+<span class="g">git</span> merge --no-edit <span class="o">&lt;remote&gt;/&lt;branch&gt;</span></div></div></div>
+    <div class="st"><span class="n">4</span><div class="d">
+      <div class="lab">還原 stash(衝突 → 衝突處理迴圈)</div>
+      <div class="cmd"><span class="g">git</span> stash pop</div></div></div>
+  </div>
+</section>
+
+<!-- 8 diff -->
+<section class="slide center">
+  <h2>gitkit diff <span class="sub">— 用你設定的工具看差異</span></h2>
+  <p class="hint">列出 U/M/S 讓你挑,選到的依序丟給 <code>git difftool</code>(走 git 標準 <code>diff.tool</code> 設定)。</p>
+  <div class="pipe" style="max-width:980px">
+    <div class="st"><span class="n">1</span><div class="d">
+      <div class="lab">收集並分類變更檔</div>
+      <div class="cmd"><span class="g">git</span> status <span class="o">--porcelain</span></div></div></div>
+    <div class="st"><span class="n">2</span><div class="d">
+      <div class="lab">已暫存的檔(S)→ 比對「暫存區 vs HEAD」</div>
+      <div class="cmd"><span class="g">git</span> difftool <span class="o">--cached -- &lt;file&gt;</span></div></div></div>
+    <div class="st"><span class="n">3</span><div class="d">
+      <div class="lab">已修改的檔(M)→ 比對「工作區 vs 暫存區」</div>
+      <div class="cmd"><span class="g">git</span> difftool <span class="o">-- &lt;file&gt;</span></div></div></div>
+  </div>
+  <div class="note">未追蹤檔(U)沒有前一版本,會被略過。先設定:<code>git config diff.tool &lt;tool&gt;</code>。</div>
+</section>
+
+<!-- 9 reset -->
+<section class="slide center">
+  <h2>gitkit reset <span class="sub">— 取消暫存,或回到某個 commit</span></h2>
+  <div class="pipe" style="max-width:1000px">
+    <div class="st"><span class="n">A</span><div class="d">
+      <div class="lab">取消暫存 — 從已暫存清單挑檔,退回工作區(內容不動)</div>
+      <div class="cmd"><span class="g">git</span> status <span class="o">--porcelain</span>      <span class="c"># 取得已暫存清單</span>
+<span class="g">git</span> reset <span class="o">-q HEAD -- &lt;files&gt;</span></div></div></div>
+    <div class="st"><span class="n">B</span><div class="d">
+      <div class="lab">重置到某個 commit — 從近 20 筆挑一筆,再選模式</div>
+      <div class="cmd"><span class="g">git</span> log <span class="o">--oneline -n 20</span>       <span class="c"># 挑 SHA</span>
+<span class="g">git</span> reset <span class="o">--soft│--mixed│--hard &lt;sha&gt;</span></div></div></div>
+  </div>
+  <div class="note"><b>--soft</b> 保留索引+工作目錄 · <b>--mixed</b>(預設)保留工作目錄、清索引 ·
+     <b>--hard</b> 丟棄所有未提交變更(<span style="color:var(--red)">危險,會先要你確認</span>)。</div>
+</section>
+
+<!-- 10 exp -->
+<section class="slide center">
+  <h2>gitkit exp <span class="sub">— 取出不帶 .git 的資料夾</span></h2>
+  <p class="hint">把板控中的某個資料夾/檔案,內容平鋪匯出到 <code>dest</code>(預設 = <code>&lt;path&gt;_exp</code>)。</p>
+  <div class="pipe" style="max-width:1040px">
+    <div class="st"><span class="n">1</span><div class="d">
+      <div class="lab">判斷這個路徑是資料夾(tree)還是單檔(blob)</div>
+      <div class="cmd"><span class="g">git</span> cat-file <span class="o">-t HEAD:&lt;path&gt;</span>   <span class="c"># → tree / blob / 不存在則報錯</span></div></div></div>
+    <div class="st"><span class="n">2</span><div class="d">
+      <div class="lab">資料夾 → 以該子樹為根 archive 成 zip,解壓進 dest(內容平鋪)</div>
+      <div class="cmd"><span class="g">git</span> archive <span class="o">--format=zip -o tmp.zip HEAD:&lt;path&gt;</span>
+unzip -o -q tmp.zip -d <span class="o">&lt;dest&gt;</span>  &amp;&amp;  rm tmp.zip</div></div></div>
+    <div class="st"><span class="n">2′</span><div class="d">
+      <div class="lab">單一檔案 → 直接寫出(免 unzip)</div>
+      <div class="cmd"><span class="g">git</span> show <span class="o">HEAD:&lt;path&gt;</span> &gt; <span class="o">&lt;dest&gt;/&lt;name&gt;</span></div></div></div>
+  </div>
+  <div class="note">用 <code>HEAD:&lt;path&gt;</code> 當 archive 的根,所以解出來直接是內容,<b>不會多一層 <code>&lt;path&gt;/</code></b>。</div>
+</section>
+
+<!-- 11 summary -->
+<section class="slide center">
+  <h2>整體對照 <span class="sub">— 全部用到的原生 git</span></h2>
+  <table>
+    <tr><th>gitkit</th><th>原生 git 流程</th></tr>
+    <tr><td><span class="tag">st</span></td><td><code>status</code> / <code>status -uno</code></td></tr>
+    <tr><td><span class="tag">ci</span></td><td><code>status --porcelain</code> → <code>add</code> → <code>commit</code> →
+      <code>branch</code>/<code>branch -r</code> → <code>stash</code> → <code>fetch</code> →
+      <code>merge</code> → <code>stash pop</code> → <code>push HEAD:&lt;b&gt;</code></td></tr>
+    <tr><td><span class="tag">up</span></td><td><code>rev-parse @{upstream}</code> → <code>stash</code> →
+      <code>fetch</code> → <code>merge</code> → <code>stash pop</code></td></tr>
+    <tr><td><span class="tag">diff</span></td><td><code>status --porcelain</code> → <code>difftool [--cached] -- &lt;f&gt;</code></td></tr>
+    <tr><td><span class="tag">reset</span></td><td><code>reset HEAD -- &lt;f&gt;</code> · <code>log --oneline</code> → <code>reset --soft/--mixed/--hard</code></td></tr>
+    <tr><td><span class="tag">exp</span></td><td><code>cat-file -t</code> → <code>archive --format=zip HEAD:&lt;p&gt;</code> + unzip · 單檔 <code>show</code></td></tr>
+    <tr><td><span class="tag">衝突</span></td><td><code>diff --diff-filter=U</code> · <code>checkout --ours/--theirs</code> ·
+      <code>mergetool</code> · <code>merge --abort</code> · <code>commit --no-edit</code></td></tr>
+  </table>
+  <div class="note">相容性:全程不使用 <code>git -C</code>、不使用 porcelain v2、不使用 <code>git stash push</code>(2.13+);
+     <code>fetch &lt;remote&gt;</code> 取代單分支 fetch — 都是為了在 <b>git 1.8.3.1</b> 正確運作。</div>
+</section>
+
+<div id="nav">
+  <button onclick="go(-1)">‹ 上一頁</button>
+  <span>方向鍵 / 空白鍵切換 · 點左右半邊翻頁 · Ctrl+P 列印成 PDF</span>
+  <button onclick="go(1)">下一頁 ›</button>
+</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  function show(n){ slides[i].classList.remove('on'); i=Math.max(0,Math.min(slides.length-1,n));
+    slides[i].classList.add('on'); document.getElementById('ctr').textContent=(i+1)+' / '+slides.length; }
+  function go(d){ show(i+d); }
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){go(1);e.preventDefault();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){go(-1);e.preventDefault();}
+    else if(e.key==='Home'){show(0);} else if(e.key==='End'){show(slides.length-1);}
+  });
+  document.addEventListener('click',e=>{ if(e.target.closest('#nav'))return;
+    go(e.clientX < window.innerWidth/2 ? -1 : 1); });
+  show(0);
+</script>
+</body>
+</html>
