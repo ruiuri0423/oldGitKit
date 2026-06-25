@@ -22,6 +22,7 @@ the symlink works from anywhere.
 
 | command | flow |
 |---------|------|
+| `gitkit st`    | `git status`; `gitkit st -uq` runs `git status -uno` (hides untracked, so only modified/staged show). |
 | `gitkit ci`    | pick U/M files → `add` → type a message → `commit` → pick a branch to `fetch` + merge-integrate (with conflict handling). Reports "No changes" when there is nothing to do. |
 | `gitkit push`  | upstream exists but 0 ahead → tells you to `ci` first; new branch (no upstream) → asks whether to `mg` first, otherwise `push -u`. |
 | `gitkit mg`    | merge the **current** branch into a chosen target; if the target is remote-only, `fetch` + `checkout -b` to bring it local first. Tells you to `push` afterwards. |
@@ -78,6 +79,7 @@ Everyday porcelain plus a few standard read-only idioms, all available in git
 
 ```
 add  commit  push  fetch  merge  checkout  reset  diff  difftool  mergetool
-status --porcelain   branch / branch -r / branch --list   log --oneline
+status / status -uno / status --porcelain   branch / branch -r / branch --list
+log --oneline
 remote   symbolic-ref   rev-parse   rev-list --count
 ```

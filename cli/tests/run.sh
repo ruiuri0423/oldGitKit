@@ -151,6 +151,19 @@ echo "== gitkit push (new branch, decline mg, push direct) =="
   check "new branch pushed to remote" "$pushed" "1"
 )
 
+echo "== gitkit st (full vs -uq modified-only) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo a > a.txt; git add a.txt; git commit -qm init
+  echo b >> a.txt          # modified tracked
+  echo x > untr.txt        # untracked
+  full="$("$GITKIT" st 2>&1)"
+  modonly="$("$GITKIT" st -uq 2>&1)"
+  case "$full"    in *untr.txt*) ok "st shows untracked";;     *) bad "st should show untracked";; esac
+  case "$modonly" in *untr.txt*) bad "st -uq should hide untracked";; *) ok "st -uq hides untracked";; esac
+  case "$modonly" in *a.txt*)    ok "st -uq still shows modified";; *) bad "st -uq should show modified";; esac
+)
+
 echo
 PASS="$(grep -c P "$RESULTS" || true)"; FAIL="$(grep -c F "$RESULTS" || true)"
 rm -f "$RESULTS"
