@@ -219,9 +219,10 @@ echo "== gitkit log (file history with changed paths) =="
   case "$out" in *edit-a*) ok "shows commit touching the file";; *) bad "edit-a missing (got: $out)";; esac
   case "$out" in *edit-b*) bad "edit-b should be filtered out";; *) ok "filters out unrelated commit";; esac
   case "$out" in *a.txt*) ok "lists changed path (svn -v style)";; *) bad "no changed path shown";; esac
-  # limit caps commit lines
-  one="$("$GITKIT" log a.txt 1 </dev/null 2>&1)"
-  case "$one" in *edit-a*) ok "limit keeps newest";; *) bad "limit newest missing";; esac
+  case "$out" in *----*) ok "has ---- separator";; *) bad "missing ---- separator";; esac
+  # arg order: limit first, then path (gitkit log [limit] [path])
+  one="$("$GITKIT" log 1 a.txt </dev/null 2>&1)"
+  case "$one" in *edit-a*) ok "limit-first keeps newest";; *) bad "limit-first newest missing (got: $one)";; esac
   case "$one" in *c1*) bad "limit 1 should drop older c1";; *) ok "limit drops older commits";; esac
 )
 

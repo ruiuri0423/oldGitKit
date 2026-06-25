@@ -28,13 +28,14 @@ and the everyday "verbose history of one file" is simply:
 ```sh
 git log --name-status -- <file>
 #   shortcut:
-gitkit log <file> [limit]      # default limit 20
+gitkit log [limit] <file>      # default limit 20; either arg order works
 ```
 
 > Note on revisions: SVN revisions are global integers; git has no `r123`. Use a
 > commit range `A..B`, a tag/branch, `HEAD~5..HEAD`, or a date
 > (`--since=2026-01-01`). `gitkit log` keeps it to `[path] [limit]`; for ranges
-> use raw `git log` as above.
+> use raw `git log` as above. `gitkit log` prints a `----` separator after each
+> commit and uses no colour.
 
 ## Common SVN → git
 
@@ -51,7 +52,7 @@ gitkit log <file> [limit]      # default limit 20
 | `svn diff -r A:B <f>`      | `git diff A..B -- <f>`                             | — |
 | `svn log`                  | `git log`                                          | `gitkit log` |
 | `svn log -v <f>`           | `git log --name-status -- <f>`                    | `gitkit log <f>` |
-| `svn log -l N`             | `git log -n N`                                     | `gitkit log <f> N` |
+| `svn log -l N`             | `git log -n N`                                     | `gitkit log N <f>` |
 | `svn revert <f>`           | `git checkout -- <f>` (discard working changes)   | — |
 | `svn revert` (unstage)     | `git reset HEAD -- <f>`                            | `gitkit reset` |
 | `svn cat -r REV <f>`       | `git show REV:<f>`                                 | — |

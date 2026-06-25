@@ -36,7 +36,7 @@ the symlink works from anywhere.
 | `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked files are skipped). |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
 | `gitkit exp`   | export a tracked folder/file **without** `.git`: `gitkit exp <path> [dest]`. The folder's contents land **flat** in `<dest>` (not nested under `<path>`), via `git archive HEAD:<path>` → `unzip` (a single file is written with `git show`). When `<dest>` is omitted it is built from `<path>` by appending `_exp` (e.g. `src/app` → `src/app_exp`). Folders require `unzip`. |
-| `gitkit log`   | history with changed paths (the `svn log -v` equivalent): `gitkit log [path] [limit]` → `git log --name-status`. With a `path` it shows just that file's history; `limit` defaults to 20. |
+| `gitkit log`   | history with changed paths (the `svn log -v` equivalent): `gitkit log [limit] [path]` → `git log --name-status`, with a `----` separator after each commit and no colour. A numeric arg is the limit (default 20), a non-numeric arg is the path; either order works. |
 
 ### `gitkit ci`
 

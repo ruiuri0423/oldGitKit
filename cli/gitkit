@@ -48,7 +48,7 @@ Usage: gitkit <command>
   exp     export a tracked folder without .git: `gitkit exp <path> [dest]`
           (git archive HEAD <path> -> unzip into dest/<path>)
   log     history with changed paths (svn log -v style):
-          `gitkit log [path] [limit]`  ->  git log --name-status
+          `gitkit log [limit] [path]`  ->  git log --name-status
 
 Conflict options: tf=their full  mf=mine full  tc=their conflict  mc=mine conflict
                   e=edit(git mergetool)  r=resolved  a=abort

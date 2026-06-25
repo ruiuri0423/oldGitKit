@@ -291,8 +291,8 @@ unzip -o -q tmp.zip -d <span class="o">&lt;dest&gt;</span>  &amp;&amp;  rm tmp.z
   </table>
   <div class="cmd" style="max-width:1000px;margin-top:12px"><span class="c"># svn log -v -r A:B -l N &lt;file&gt;  等於</span>
 <span class="g">git</span> log <span class="o">--name-status A..B -n N -- &lt;file&gt;</span>
-<span class="c"># 日常：某檔的詳細歷史</span>
-gitkit log <span class="o">&lt;file&gt; [limit]</span>   <span class="c"># → git log --name-status -- &lt;file&gt;(預設 20 筆)</span></div>
+<span class="c"># 日常：某檔的詳細歷史(每筆後加 ---- 分隔、不上色)</span>
+gitkit log <span class="o">[limit] [path]</span>   <span class="c"># → git log --name-status -- &lt;path&gt;(預設 20 筆)</span></div>
   <div class="note">SVN 的 <code>rNNN</code> 是全域整數;git 沒有,改用 commit SHA 或範圍
      <code>A..B</code> / <code>HEAD~5..HEAD</code> / <code>--since=2026-01-01</code>。
      完整對照見 <code>cli/docs/svn-to-git.md</code>。</div>
