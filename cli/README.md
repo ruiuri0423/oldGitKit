@@ -27,7 +27,7 @@ the symlink works from anywhere.
 | `gitkit up`    | update the current branch from its upstream (no commit/push): `git stash` leftover edits → `fetch` + `merge` upstream → `git stash pop`, with the same conflict handling as `ci`. Errors if the branch has no upstream. |
 | `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked files are skipped). |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
-| `gitkit exp`   | export a tracked folder/file **without** `.git`: `gitkit exp <path> [dest]` runs `git archive HEAD <path>` → `unzip` into `<dest>/<path>`. Prompts for `path`/`dest` if omitted; requires `unzip`. |
+| `gitkit exp`   | export a tracked folder/file **without** `.git`: `gitkit exp <path> [dest]`. The folder's contents land **flat** in `<dest>` (not nested under `<path>`), via `git archive HEAD:<path>` → `unzip` (a single file is written with `git show`). When `<dest>` is omitted it is built from `<path>` by appending `_exp` (e.g. `src/app` → `src/app_exp`). Folders require `unzip`. |
 
 ### `gitkit ci`
 
@@ -86,8 +86,9 @@ bash cli/tests/run.sh
 
 Builds throwaway repos and pipes menu answers to exercise `ci` (commit/push,
 stash restore, merge conflict), `up` (fast-forward pull, stash restore, no
-upstream), `exp`, `reset`, `st`, and the conflict parser (33 checks). The
-interactive `e`/difftool paths are out of scope for the automated tests.
+upstream), `exp` (flat folder export, default dest, single file), `reset`,
+`st`, and the conflict parser (36 checks). The interactive `e`/difftool paths
+are out of scope for the automated tests.
 
 ## git commands used
 
@@ -98,6 +99,6 @@ Everyday porcelain plus a few standard read-only idioms, all available in git
 add  commit  push  fetch  merge  checkout  reset  diff  difftool  mergetool
 stash / stash pop / stash drop / stash list   archive --format=zip
 status / status -uno / status --porcelain   branch / branch -r / branch --list
-log --oneline
+log --oneline   cat-file -t   show   (exp: detect tree/blob, write a file)
 remote   symbolic-ref   rev-parse   rev-list --count
 ```

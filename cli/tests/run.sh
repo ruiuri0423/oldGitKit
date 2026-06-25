@@ -172,7 +172,7 @@ echo "== gitkit reset to commit (mixed) =="
   check "working file kept (uncommitted)" "$(cat a.txt)" "$(printf '1\n2')"
 )
 
-echo "== gitkit exp (export tracked folder without .git) =="
+echo "== gitkit exp (export folder contents flat into dest) =="
 if command -v unzip >/dev/null 2>&1; then
 (
   d="$(newrepo)"; cd "$d"
@@ -180,16 +180,30 @@ if command -v unzip >/dev/null 2>&1; then
   echo root > root.txt
   git add .; git commit -qm init
   "$GITKIT" exp sub out_exp </dev/null >/dev/null 2>&1
-  check "extracted file content"   "$(cat out_exp/sub/f.txt 2>/dev/null)" "hi"
-  check "extracted nested file"    "$(cat out_exp/sub/inner/g.txt 2>/dev/null)" "nested"
-  check "no .git in export"        "$([ -e out_exp/.git ] && echo yes || echo no)" "no"
-  check "sibling not exported"     "$([ -e out_exp/root.txt ] && echo yes || echo no)" "no"
+  check "contents flat (no sub/ nesting)" "$(cat out_exp/f.txt 2>/dev/null)" "hi"
+  check "nested kept under dest"          "$(cat out_exp/inner/g.txt 2>/dev/null)" "nested"
+  check "path not re-nested"              "$([ -e out_exp/sub ] && echo yes || echo no)" "no"
+  check "no .git in export"               "$([ -e out_exp/.git ] && echo yes || echo no)" "no"
+  check "sibling not exported"            "$([ -e out_exp/root.txt ] && echo yes || echo no)" "no"
+)
+(
+  d="$(newrepo)"; cd "$d"
+  mkdir -p sub; echo hi > sub/f.txt; git add .; git commit -qm init
+  # dest omitted -> default "<path>_exp"; accept the prompt default with Enter
+  printf '\n' | "$GITKIT" exp sub >/dev/null 2>&1
+  check "default dest = path_exp" "$(cat sub_exp/f.txt 2>/dev/null)" "hi"
+)
+(
+  d="$(newrepo)"; cd "$d"
+  printf 'one\ntwo\n' > only.txt; git add only.txt; git commit -qm init
+  "$GITKIT" exp only.txt filedest </dev/null >/dev/null 2>&1
+  check "single file exported" "$(cat filedest/only.txt 2>/dev/null)" "$(printf 'one\ntwo')"
 )
 (
   d="$(newrepo)"; cd "$d"
   echo a > a.txt; git add a.txt; git commit -qm init
   out="$("$GITKIT" exp nope dest </dev/null 2>&1)"
-  case "$out" in *"git archive failed"*) ok "errors on untracked path";; *) bad "untracked-path error (got: $out)";; esac
+  case "$out" in *"not found in HEAD"*) ok "errors on untracked path";; *) bad "untracked-path error (got: $out)";; esac
 )
 else
   ok "exp skipped (no unzip)"

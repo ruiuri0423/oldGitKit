@@ -3,15 +3,14 @@
 #
 #   gitkit exp <path> [dest]
 #
-# Mirrors:  git archive -o tmp.zip HEAD -- <path>
-#           unzip tmp.zip -d <dest>
-#           rm tmp.zip
-# <path> is the version-controlled folder/file to extract; <dest> is where the
-# extracted copy lands (as <dest>/<path>/...). Requires `unzip`.
+# <path> is the version-controlled folder/file to extract. <dest> receives the
+# folder's CONTENTS directly (flat) — not nested under <path>. When <dest> is
+# omitted it is built from <path> by appending "_exp" (e.g. src/app -> src/app_exp).
+# Folders go through `git archive HEAD:<path>` + unzip; a single file is written
+# straight out with `git show`.
 
 gk_cmd_exp() {
   gk_need_repo
-  command -v unzip >/dev/null 2>&1 || gk_die "unzip not found (required for exp)"
 
   local path="${1:-}" dest="${2:-}"
   if [ -z "$path" ]; then
@@ -21,8 +20,19 @@ gk_cmd_exp() {
   [ -z "$path" ] && { gk_warn "no path given"; return 1; }
   path="${path%/}"                       # strip a trailing slash
 
+  local typ
+  typ="$(gk_git cat-file -t "HEAD:$path" 2>/dev/null)" || typ=""
+  case "$typ" in
+    tree|blob) : ;;
+    *) gk_die "'$path' not found in HEAD";;
+  esac
+  if [ "$typ" = "tree" ]; then          # folders need unzip; single files don't
+    command -v unzip >/dev/null 2>&1 || gk_die "unzip not found (required for exp)"
+  fi
+
+  # dest is derived from path unless given explicitly.
   if [ -z "$dest" ]; then
-    local def; def="$(basename "$path")_exp"
+    local def="${path}_exp"
     printf 'Destination folder [%s]: ' "$def" >&2
     IFS= read -r dest || dest=""
     [ -z "$dest" ] && dest="$def"
@@ -32,19 +42,21 @@ gk_cmd_exp() {
     gk_confirm "'$dest' exists and is not empty; extract into it (may overwrite)?" n \
       || { gk_warn "cancelled"; return 1; }
   fi
-
-  local zip
-  zip="$(mktemp)" || return 1
-  gk_info "archiving HEAD:$path ..."
-  if ! gk_git archive --format=zip -o "$zip" HEAD -- "$path"; then
-    gk_err "git archive failed (is '$path' tracked in HEAD?)"
-    rm -f "$zip"; return 1
-  fi
   mkdir -p "$dest"
-  if ! unzip -o -q "$zip" -d "$dest"; then
-    gk_err "unzip failed"
-    rm -f "$zip"; return 1
+
+  if [ "$typ" = "blob" ]; then
+    gk_info "exporting file HEAD:$path ..."
+    gk_git show "HEAD:$path" > "$dest/$(basename "$path")" || { gk_err "export failed"; return 1; }
+  else
+    local zip; zip="$(mktemp)" || return 1
+    gk_info "archiving HEAD:$path ..."
+    if ! gk_git archive --format=zip -o "$zip" "HEAD:$path"; then
+      gk_err "git archive failed"; rm -f "$zip"; return 1
+    fi
+    if ! unzip -o -q "$zip" -d "$dest"; then
+      gk_err "unzip failed"; rm -f "$zip"; return 1
+    fi
+    rm -f "$zip"
   fi
-  rm -f "$zip"
-  gk_ok "exported '$path' -> '$dest/$path' (no .git)"
+  gk_ok "exported '$path' -> '$dest/' (no .git)"
 }
