@@ -316,19 +316,21 @@ gk_pull_with_stash() {
   local kind="$1" ref="$2" remote="$3" stashed=0 rc
   if ! gk_git diff --quiet; then
     gk_info "stashing local modifications ..."
-    gk_git stash && stashed=1
+    gk_git stash -q && stashed=1          # -q: no git-format chatter
   fi
 
   gk_integrate "$kind" "$ref" "$remote"
   rc=$?
   if [ $rc -ne 0 ]; then
-    [ $stashed -eq 1 ] && { gk_warn "restoring stashed changes ..."; gk_git stash pop || true; }
+    [ $stashed -eq 1 ] && { gk_warn "restoring stashed changes ..."; gk_git stash pop -q || true; }
     return $rc
   fi
 
   if [ $stashed -eq 1 ]; then
-    if gk_git stash pop; then
+    # -q: suppress git's long status dump; show it svn-like instead.
+    if gk_git stash pop -q; then
       gk_ok "restored local modifications"
+      gk_print_status
     elif gk_git diff --name-only --diff-filter=U | grep -q .; then
       gk_resolve_conflicts stash || { gk_warn "aborted during stash pop"; return 2; }
       gk_git stash drop

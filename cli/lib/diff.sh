@@ -3,19 +3,22 @@
 #
 #   gitkit diff                 pick from U/M/S, working tree vs index
 #   gitkit diff -uq             same, but only list modified files
+#   gitkit diff -y              do not prompt before launching the tool (-y)
+#   gitkit diff <file>          diff that file directly (no commit, no menu)
 #   gitkit diff <commit> [path]        working tree vs <commit>  (svn diff -r)
 #   gitkit diff <commitA> <commitB> [path]   <commitA> vs <commitB>
 # A path that exists on disk is treated as a path; otherwise an arg that
-# resolves to a commit is a commit. Up to two commits, one path.
+# resolves to a commit is a commit. Up to two commits, one path. -uq/-y any order.
 
 gk_cmd_diff() {
   gk_need_repo
 
   local uq=0 path="" a
-  local commits=()
+  local commits=() dt=()             # dt = extra difftool opts (e.g. -y)
   for a in "$@"; do
     case "$a" in
-      -uq) uq=1; continue;;
+      -uq)        uq=1; continue;;
+      -y|--no-prompt) dt+=("-y"); continue;;   # skip the "Launch tool?" prompt
     esac
     if [ -e "$a" ]; then
       path="$a"
@@ -30,11 +33,11 @@ gk_cmd_diff() {
   if [ ${#commits[@]} -ge 1 ]; then
     gk_info "difftool ${commits[*]}${path:+  -- $path}"
     if [ ${#commits[@]} -eq 2 ]; then
-      if [ -n "$path" ]; then gk_git difftool "${commits[0]}" "${commits[1]}" -- "$path"
-      else                    gk_git difftool "${commits[0]}" "${commits[1]}"; fi
+      if [ -n "$path" ]; then gk_git difftool "${dt[@]}" "${commits[0]}" "${commits[1]}" -- "$path"
+      else                    gk_git difftool "${dt[@]}" "${commits[0]}" "${commits[1]}"; fi
     else
-      if [ -n "$path" ]; then gk_git difftool "${commits[0]}" -- "$path"
-      else                    gk_git difftool "${commits[0]}"; fi
+      if [ -n "$path" ]; then gk_git difftool "${dt[@]}" "${commits[0]}" -- "$path"
+      else                    gk_git difftool "${dt[@]}" "${commits[0]}"; fi
     fi
     return
   fi
@@ -42,7 +45,7 @@ gk_cmd_diff() {
   # Direct file mode: `gitkit diff <file>` — no commit, no menu.
   if [ -n "$path" ]; then
     gk_info "difftool -- $path"
-    gk_git difftool -- "$path"
+    gk_git difftool "${dt[@]}" -- "$path"
     return
   fi
 
@@ -62,8 +65,8 @@ gk_cmd_diff() {
   for i in "${GK_PICK_IDXS[@]}"; do
     k="${GK_MENU_KINDS[$i]}"; p="${GK_MENU_PATHS[$i]}"
     case "$k" in
-      S) gk_info "diff (staged):  $p"; gk_git difftool --cached -- "$p";;
-      M) gk_info "diff (working): $p"; gk_git difftool -- "$p";;
+      S) gk_info "diff (staged):  $p"; gk_git difftool "${dt[@]}" --cached -- "$p";;
+      M) gk_info "diff (working): $p"; gk_git difftool "${dt[@]}" -- "$p";;
       U) gk_warn "untracked file has no previous version, skipping: $p";;
     esac
   done

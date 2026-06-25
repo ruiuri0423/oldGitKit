@@ -277,6 +277,37 @@ echo "== gitkit diff <commit> <file> (commit mode via difftool) =="
   check "difftool invoked (working vs commit)" "$([ -s ranlog.txt ] && echo yes || echo no)" "yes"
 )
 
+echo "== gitkit diff -y (no difftool prompt) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo v1 > a.txt; git add a.txt; git commit -qm c1
+  c1="$(git rev-parse HEAD)"
+  echo v2 > a.txt; git commit -qam c2
+  git config diff.tool dummy
+  git config difftool.dummy.cmd 'printf ran >> ranlog.txt'
+  # NOTE: leave difftool.prompt at its default (on); -y must skip it (no stdin)
+  "$GITKIT" diff -y "$c1" a.txt </dev/null >/dev/null 2>&1
+  check "-y launches tool without prompting" "$([ -s ranlog.txt ] && echo yes || echo no)" "yes"
+)
+
+echo "== gitkit up (post-pop status is svn-like, not git format) =="
+(
+  d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  echo a > a.txt; git add a.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  c2="$(mktemp -d)"; git clone -q "$rem" "$c2" 2>/dev/null
+  ( cd "$c2" && git config user.email t@t && git config user.name t \
+    && git checkout -q -B main origin/main \
+    && echo b > b.txt && git add b.txt && git commit -qm second \
+    && git push -q origin HEAD:main ) >/dev/null 2>&1
+  echo edit >> a.txt; echo dbg > note.log          # local modified + untracked
+  out="$("$GITKIT" up </dev/null 2>&1)"
+  case "$out" in *"Changes not staged for commit"*) bad "git-format status leaked";; *) ok "no git-format status block";; esac
+  printf '%s\n' "$out" | grep -qE '^ M	a\.txt$'   && ok "restored edit shown svn-like" || bad "edit not svn-like (got: $out)"
+  printf '%s\n' "$out" | grep -qE '^ \?	note\.log$' && ok "untracked shown svn-like"   || bad "untracked not svn-like"
+)
+
 echo "== gitkit log (file history with changed paths) =="
 (
   d="$(newrepo)"; cd "$d"

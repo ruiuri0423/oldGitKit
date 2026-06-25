@@ -226,8 +226,8 @@ awk … f &gt; tmp &amp;&amp; mv tmp f &amp;&amp; <span class="g">git</span> add
       <div class="lab">還原 stash(衝突 → 衝突處理迴圈)</div>
       <div class="cmd"><span class="g">git</span> stash pop</div></div></div>
   </div>
-  <div class="note">合併用 <code>--no-stat</code> 蓋掉 git 自己的清單,改印 svn-like 的
-     <b>changed files</b>(<code>git diff --name-status &lt;舊HEAD&gt; HEAD</code>,同 <code>st</code> 格式)。</div>
+  <div class="note">合併用 <code>--no-stat</code>、stash 用 <code>-q</code> 蓋掉 git 原生輸出,
+     改印 svn-like 的 <b>changed files</b> 與還原的本地修改(同 <code>st</code> 格式)。</div>
 </section>
 
 <!-- 8 diff -->
@@ -248,6 +248,7 @@ awk … f &gt; tmp &amp;&amp; mv tmp f &amp;&amp; <span class="g">git</span> add
   <div class="cmd" style="max-width:1040px;margin-top:10px"><span class="c"># 直接指定檔案 / commit(不用進選單)</span>
 gitkit diff <span class="o">&lt;file&gt;</span>              → <span class="g">git</span> difftool -- &lt;file&gt;            <span class="c"># 直接比這個檔</span>
 gitkit diff <span class="o">-uq</span>                 <span class="c"># 選單只列已修改</span>
+gitkit diff <span class="o">-y</span>                  → <span class="g">git</span> difftool -y …             <span class="c"># 不再詢問是否開工具</span>
 gitkit diff <span class="o">&lt;commit&gt; [path]</span>      → <span class="g">git</span> difftool &lt;commit&gt; -- &lt;path&gt;   <span class="c"># 工作區 vs commit</span>
 gitkit diff <span class="o">&lt;A&gt; &lt;B&gt; [path]</span>       → <span class="g">git</span> difftool &lt;A&gt; &lt;B&gt; -- &lt;path&gt;     <span class="c"># 兩個 commit 比較</span></div>
   <div class="note">未追蹤檔(U)沒有前一版本,會被略過。先設定:<code>git config diff.tool &lt;tool&gt;</code>。</div>

@@ -102,7 +102,8 @@ _gk_help_up() {
     2. git fetch <remote> ; git merge <upstream>   (conflicts -> see "conflicts")
     3. git stash pop                               (conflicts -> see "conflicts")
 
-  Afterwards it prints, svn-like, the files the merge changed. Errors if the
+  Afterwards it prints, svn-like, the files the merge changed and the local
+  edits restored from the stash (no git-format status dump). Errors if the
   branch has no upstream (use `gitkit ci` to pick a branch the first time).
 EOF
 }
@@ -113,12 +114,14 @@ _gk_help_diff() {
 
     gitkit diff                    pick from U/M/S, working tree vs index
     gitkit diff -uq                same menu, but list modified files only
+    gitkit diff -y                 don't prompt before launching the tool (-y)
     gitkit diff <file>             diff that file directly (no commit, no menu)
     gitkit diff <commit> [path]    working tree vs <commit>
     gitkit diff <commitA> <commitB> [path]    diff between two commits
 
-  An argument that exists on disk is a path; otherwise an argument that
-  resolves to a commit is a commit. Set the tool first:
+  -uq and -y may be combined and appear in any order. An argument that exists
+  on disk is a path; otherwise an argument that resolves to a commit is a
+  commit. Set the tool first:
     git config diff.tool <tool>     (and merge.tool for conflict edits)
 EOF
 }
