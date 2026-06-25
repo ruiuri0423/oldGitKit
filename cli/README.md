@@ -23,16 +23,30 @@ the symlink works from anywhere.
 | command | flow |
 |---------|------|
 | `gitkit st`    | `git status`; `gitkit st -uq` runs `git status -uno` (hides untracked, so only modified/staged show). |
-| `gitkit ci`    | pick U/M files → `add` → type a message → `commit` → pick a branch to `fetch` + merge-integrate (with conflict handling). Reports "No changes" when there is nothing to do. |
-| `gitkit push`  | upstream exists but 0 ahead → tells you to `ci` first; new branch (no upstream) → asks whether to `mg` first, otherwise `push -u`. |
-| `gitkit mg`    | merge the **current** branch into a chosen target; if the target is remote-only, `fetch` + `checkout -b` to bring it local first. Tells you to `push` afterwards. |
+| `gitkit ci`    | the one combined flow — see below. `push` and `mg` are folded into it. |
 | `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked files are skipped). |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
 
+### `gitkit ci`
+
+A single commit → sync → push flow:
+
+1. show U/M files, pick which to `add`;
+2. `commit` with a message you type;
+3. pick a branch (local or remote) — the one to sync with **and push to**;
+4. if any modified files are left over, `git stash` them so the merge is clean;
+5. `fetch` + `merge` the chosen branch into the current branch (conflict loop);
+6. `git stash pop` to restore the leftover edits (conflict loop);
+7. after confirmation, `git push <remote> HEAD:<chosen branch>`.
+
+With no local changes it reports "No changes to commit" and asks whether to
+sync & push anyway. Conflicts from either the merge (step 5) or the stash pop
+(step 6) go through the same resolution options below.
+
 ## Conflict resolution
 
-When `ci` / `mg` integration produces conflicts, choose one action for **all**
-conflicted files:
+When `ci` produces conflicts (from the merge or the stash pop), choose one
+action for **all** conflicted files:
 
 | option | meaning | underlying git |
 |--------|---------|----------------|
@@ -68,9 +82,10 @@ git config --global merge.tool <tool>
 bash cli/tests/run.sh
 ```
 
-Builds throwaway repos and pipes menu answers to exercise `ci`/`push`/`mg`/
-`reset` and the conflict parser (21 checks). The interactive `e`/difftool paths
-are out of scope for the automated tests.
+Builds throwaway repos and pipes menu answers to exercise `ci` (commit/push,
+stash restore, merge conflict), `reset`, `st`, and the conflict parser
+(22 checks). The interactive `e`/difftool paths are out of scope for the
+automated tests.
 
 ## git commands used
 
@@ -79,6 +94,7 @@ Everyday porcelain plus a few standard read-only idioms, all available in git
 
 ```
 add  commit  push  fetch  merge  checkout  reset  diff  difftool  mergetool
+stash / stash pop / stash drop / stash list
 status / status -uno / status --porcelain   branch / branch -r / branch --list
 log --oneline
 remote   symbolic-ref   rev-parse   rev-list --count

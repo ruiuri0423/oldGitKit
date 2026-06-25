@@ -53,53 +53,57 @@ echo "== gk_collect_status =="
   check "staged detected"    "${GK_S[*]}" "staged.txt"
 )
 
-echo "== gitkit ci (happy path: add+commit, skip integrate) =="
+echo "== gitkit ci (commit selected + push to chosen branch) =="
 (
   d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
   echo a > a.txt; git add a.txt; git commit -qm init
-  echo x > f1.txt          # untracked -> only addable item
-  before="$(git rev-list --count HEAD)"
-  printf '1\nadd f1\nn\n' | "$GITKIT" ci >/dev/null 2>&1
-  after="$(git rev-list --count HEAD)"
-  check "commit count grew" "$after" "$((before + 1))"
-  check "f1 tracked now" "$(git ls-files f1.txt)" "f1.txt"
-  check "commit message" "$(git log -1 --format=%s)" "add f1"
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  echo edit >> a.txt          # modified tracked -> the only addable item
+  # add file 1; msg; branch list local main(1) remote origin/main(2) -> push to 2;
+  # clean tree after commit (no stash); merge up-to-date; push confirm y
+  printf '1\nedit a\n2\ny\n' | "$GITKIT" ci >/dev/null 2>&1
+  check "commit message" "$(git log -1 --format=%s)" "edit a"
+  check "pushed to origin/main" "$(git ls-remote "$rem" refs/heads/main | cut -f1)" "$(git rev-parse HEAD)"
 )
 
-echo "== gitkit ci (no changes) =="
+echo "== gitkit ci (stash leftover edit, restore after merge) =="
 (
   d="$(newrepo)"; cd "$d"
-  echo a > a.txt; git add a.txt; git commit -qm init
-  out="$(printf '' | "$GITKIT" ci 2>&1)"
-  case "$out" in *"No changes"*) ok "reports No changes";; *) bad "no-change notice (got: $out)";; esac
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  printf 'a\n' > a.txt; printf 'b\n' > b.txt; git add a.txt b.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  printf 'a2\n' >> a.txt       # will commit (file 1)
+  printf 'b2\n' >> b.txt       # leftover -> stashed, then popped back
+  # paths sorted: a.txt(1) b.txt(2); select only 1; msg; push branch 2; push y
+  printf '1\nedit a\n2\ny\n' | "$GITKIT" ci >/dev/null 2>&1
+  check "leftover b.txt restored" "$(tail -n1 b.txt)" "b2"
+  check "a.txt committed" "$(git log -1 --format=%s)" "edit a"
+  check "no stash left" "$(git stash list | wc -l | tr -d ' ')" "0"
 )
 
-echo "== gitkit ci integrate with conflict, resolved via tc (theirs) =="
+echo "== gitkit ci (merge conflict resolved via tc, push skipped) =="
 (
   d="$(newrepo)"; cd "$d"
   printf 'line1\nshared\nline3\n' > c.txt; git add c.txt; git commit -qm base
   git checkout -q -b other
   printf 'line1\nTHEIRS\nline3\n' > c.txt; git commit -qam theirs
   git checkout -q main
-  printf 'line1\nMINE\nline3\n' > c.txt    # uncommitted -> ci will add+commit it
-  # ci flow: add file 1; msg "mine"; integrate? y; branches main(1) other(2) -> 2;
-  #          conflict on c.txt -> tc (take theirs)
-  printf '1\nmine\ny\n2\ntc\n' | "$GITKIT" ci >/dev/null 2>&1
-  markers="$(grep -c '<<<<<<<' c.txt || true)"
-  check "no conflict markers left" "$markers" "0"
+  printf 'line1\nMINE\nline3\n' > c.txt    # uncommitted -> ci commits it
+  # add 1; msg; push branch: local main(1) other(2) -> merge other = 2;
+  # conflict -> tc (theirs); push confirm n (no remote configured)
+  printf '1\nmine\n2\ntc\nn\n' | "$GITKIT" ci >/dev/null 2>&1
+  check "no conflict markers left" "$(grep -c '<<<<<<<' c.txt || true)" "0"
   check "took THEIRS side" "$(sed -n 2p c.txt)" "THEIRS"
-  merged="$(git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && echo pending || echo done)"
-  check "merge finalised" "$merged" "done"
+  check "merge finalised" "$(git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && echo pending || echo done)" "done"
 )
 
-echo "== gitkit push guard (no new commit) =="
+echo "== gitkit ci (no changes, decline sync) =="
 (
   d="$(newrepo)"; cd "$d"
-  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
   echo a > a.txt; git add a.txt; git commit -qm init
-  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
-  out="$(printf '' | "$GITKIT" push 2>&1)"
-  case "$out" in *"run gitkit ci first"*) ok "blocks empty push";; *) bad "empty-push guard (got: $out)";; esac
+  out="$(printf 'n\n' | "$GITKIT" ci 2>&1)"
+  case "$out" in *"No changes to commit"*) ok "reports No changes to commit";; *) bad "no-change notice (got: $out)";; esac
 )
 
 echo "== gitkit reset unstage =="
@@ -123,32 +127,6 @@ echo "== gitkit reset to commit (mixed) =="
   printf '2\n2\n2\n' | "$GITKIT" reset >/dev/null 2>&1
   check "HEAD moved to c1" "$(git rev-parse HEAD)" "$first"
   check "working file kept (uncommitted)" "$(cat a.txt)" "$(printf '1\n2')"
-)
-
-echo "== gitkit mg (merge current branch into local target, no conflict) =="
-(
-  d="$(newrepo)"; cd "$d"
-  echo a > a.txt; git add a.txt; git commit -qm init
-  git checkout -q -b feature
-  echo f > f.txt; git add f.txt; git commit -qm feat
-  # on feature; locals sorted: feature(1) main(2) -> target main = 2
-  printf '2\n' | "$GITKIT" mg >/dev/null 2>&1
-  check "switched to target main" "$(git symbolic-ref --short HEAD)" "main"
-  check "feature merged into main" "$(git ls-files f.txt)" "f.txt"
-)
-
-echo "== gitkit push (new branch, decline mg, push direct) =="
-(
-  d="$(newrepo)"; cd "$d"
-  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
-  echo a > a.txt; git add a.txt; git commit -qm init
-  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
-  git checkout -q -b newfeat
-  echo n > n.txt; git add n.txt; git commit -qm nf
-  # no upstream -> mg? n ; push direct? y
-  printf 'n\ny\n' | "$GITKIT" push >/dev/null 2>&1
-  pushed="$(git ls-remote "$rem" refs/heads/newfeat | wc -l)"
-  check "new branch pushed to remote" "$pushed" "1"
 )
 
 echo "== gitkit st (full vs -uq modified-only) =="

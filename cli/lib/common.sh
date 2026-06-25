@@ -98,10 +98,6 @@ gk_default_remote() {
   printf '%s\n' "${r:-origin}"
 }
 
-gk_has_upstream() {
-  gk_git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1
-}
-
 # Fills GK_U (untracked), GK_M (modified-unstaged), GK_S (staged).
 # A file can appear in both GK_M and GK_S (partially staged).
 gk_collect_status() {
@@ -162,8 +158,10 @@ gk_keep_side() {
 gk_has_conflict_markers() { grep -qE '^(<<<<<<< |=======$|>>>>>>> )' "$1" 2>/dev/null; }
 
 # Loop until no unmerged paths remain (or abort). Returns 2 on abort.
+# CONTEXT (default "merge") decides what "abort" undoes:
+#   merge → git merge --abort ;  stash → git reset --hard HEAD (stash preserved)
 gk_resolve_conflicts() {
-  local conf f ans
+  local ctx="${1:-merge}" conf f ans
   while :; do
     mapfile -t conf < <(gk_git diff --name-only --diff-filter=U)
     [ ${#conf[@]} -eq 0 ] && break
@@ -185,7 +183,13 @@ gk_resolve_conflicts() {
             fi
             gk_git add -- "$f"
           done;;
-      a)  gk_git merge --abort 2>/dev/null; gk_warn "merge aborted"; return 2;;
+      a)  if [ "$ctx" = "stash" ]; then
+            gk_git reset --hard HEAD >/dev/null 2>&1
+            gk_warn "stash pop aborted (changes kept in 'git stash list')"
+          else
+            gk_git merge --abort 2>/dev/null; gk_warn "merge aborted"
+          fi
+          return 2;;
       *)  gk_warn "invalid option: $ans";;
     esac
   done
