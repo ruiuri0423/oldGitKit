@@ -37,13 +37,15 @@ gitkit — simplified git workflow tool
 
 Usage: gitkit <command>
 
-  st      svn-like status ("<CODE>\t<path>"); `gitkit st -uq` hides untracked
+  st      svn-like status ("<S?><CODE>\t<path>"; col1 'S' = staged);
+          `gitkit st -uq` hides untracked
   ci      the combined flow: pick U/M files (or `gitkit ci <path>...` to stage
           those directly, skipping the menu) -> commit -> pick a branch -> stash
           leftover edits -> fetch + merge -> stash pop -> push (conflict handling)
   up      update the current branch from its upstream (no commit/push):
           stash leftover edits -> fetch + merge upstream -> stash pop
   diff    pick U/M/S files and open each in git's configured difftool;
+          `gitkit diff <file>` diffs that file directly (no commit/menu);
           `gitkit diff -uq` lists modified only; `gitkit diff <commit> [path]`
           (or `<commitA> <commitB> [path]`) diffs against a commit
   reset   unstage files, or reset the branch to a commit (soft/mixed/hard)

@@ -120,20 +120,23 @@
 
 <!-- 3 st -->
 <section class="slide center">
-  <h2>gitkit st <span class="sub">— svn-like 狀態</span></h2>
-  <p class="hint">用 <code>git status --porcelain</code> 收集,再印成
-     <b>每行「狀態字母 + Tab + 路徑」</b>,和 <code>gitkit log</code> 同一個格式。</p>
-  <div class="cmd" style="max-width:760px"><span class="c"># gitkit st</span>
-M	verilog/src/top/pos_new.v
-A	src/new_module.v
-?	scratch/tmp.log         <span class="c"># ? = 未追蹤(untracked)</span></div>
+  <h2>gitkit st <span class="sub">— svn-like 狀態(含 S 暫存欄)</span></h2>
+  <p class="hint">用 <code>git status --porcelain</code> 收集,印成每行
+     <b>「<span style="color:var(--accent)">S</span>?+狀態字母 + Tab + 路徑」</b> —
+     第一欄 <b>S</b> = 已在 stage,第二欄是變更類型。</p>
+  <div class="cmd" style="max-width:780px"><span class="c"># gitkit st            (第一欄 S = 已暫存)</span>
+SA	src/new_module.v     <span class="c"># 已暫存的新增</span>
+SM	verilog/top/pos.v    <span class="c"># 已暫存的修改</span>
+ M	verilog/top/alu.v    <span class="c"># 已修改、未暫存</span>
+ ?	scratch/tmp.log      <span class="c"># 未追蹤(? )</span></div>
   <div class="pipe" style="max-width:880px;margin-top:10px">
     <div class="st"><span class="n">1</span><div class="d">
-      <div class="lab"><b>gitkit st</b> — 全部變更(svn 風格單一字母 M/A/D/?/C)</div></div></div>
+      <div class="lab"><b>gitkit st</b> — 全部變更(S=staged · M/A/D/R/?/C)</div></div></div>
     <div class="st"><span class="n">2</span><div class="d">
       <div class="lab"><b>gitkit st -uq</b> — 隱藏未追蹤(只看已修改 / 已暫存)</div></div></div>
   </div>
-  <div class="note">其他參數原樣轉給 <code>git status</code>,例如 <code>gitkit st -s</code>。</div>
+  <div class="note">這是<b>單一函數</b> <code>gk_print_status</code> 的輸出,<code>up</code> / <code>ci</code>
+     合併後「changed files」也用它(<code>git diff --name-status</code> 模式)。</div>
 </section>
 
 <!-- 4 ci part 1 -->
@@ -223,6 +226,8 @@ awk … f &gt; tmp &amp;&amp; mv tmp f &amp;&amp; <span class="g">git</span> add
       <div class="lab">還原 stash(衝突 → 衝突處理迴圈)</div>
       <div class="cmd"><span class="g">git</span> stash pop</div></div></div>
   </div>
+  <div class="note">合併用 <code>--no-stat</code> 蓋掉 git 自己的清單,改印 svn-like 的
+     <b>changed files</b>(<code>git diff --name-status &lt;舊HEAD&gt; HEAD</code>,同 <code>st</code> 格式)。</div>
 </section>
 
 <!-- 8 diff -->
@@ -240,7 +245,8 @@ awk … f &gt; tmp &amp;&amp; mv tmp f &amp;&amp; <span class="g">git</span> add
       <div class="lab">已修改的檔(M)→ 比對「工作區 vs 暫存區」</div>
       <div class="cmd"><span class="g">git</span> difftool <span class="o">-- &lt;file&gt;</span></div></div></div>
   </div>
-  <div class="cmd" style="max-width:1000px;margin-top:10px"><span class="c"># 指定 commit / 檔案(svn diff -r 的對應)</span>
+  <div class="cmd" style="max-width:1040px;margin-top:10px"><span class="c"># 直接指定檔案 / commit(不用進選單)</span>
+gitkit diff <span class="o">&lt;file&gt;</span>              → <span class="g">git</span> difftool -- &lt;file&gt;            <span class="c"># 直接比這個檔</span>
 gitkit diff <span class="o">-uq</span>                 <span class="c"># 選單只列已修改</span>
 gitkit diff <span class="o">&lt;commit&gt; [path]</span>      → <span class="g">git</span> difftool &lt;commit&gt; -- &lt;path&gt;   <span class="c"># 工作區 vs commit</span>
 gitkit diff <span class="o">&lt;A&gt; &lt;B&gt; [path]</span>       → <span class="g">git</span> difftool &lt;A&gt; &lt;B&gt; -- &lt;path&gt;     <span class="c"># 兩個 commit 比較</span></div>
@@ -309,7 +315,7 @@ gitkit log <span class="o">[limit] [path]</span>   <span class="c"># → git log
   <h2>整體對照 <span class="sub">— 全部用到的原生 git</span></h2>
   <table>
     <tr><th>gitkit</th><th>原生 git 流程</th></tr>
-    <tr><td><span class="tag">st</span></td><td><code>status --porcelain</code> → 印成 <code>&lt;CODE&gt;\t&lt;path&gt;</code>(svn-like;<code>-uq</code> 隱藏未追蹤)</td></tr>
+    <tr><td><span class="tag">st</span></td><td><code>status --porcelain</code> → <code>&lt;S?&gt;&lt;CODE&gt;\t&lt;path&gt;</code>(S=已暫存;<code>-uq</code> 隱藏未追蹤)· 同函數供 up/ci 顯示 changed files</td></tr>
     <tr><td><span class="tag">ci</span></td><td><code>status --porcelain</code> → <code>add</code>(或指定 path)→ <code>commit</code> →
       <code>branch</code>/<code>branch -r</code> → <code>stash</code> → <code>fetch</code> →
       <code>merge</code> → <code>stash pop</code> → <code>push HEAD:&lt;b&gt;</code></td></tr>

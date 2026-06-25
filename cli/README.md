@@ -30,10 +30,10 @@ the symlink works from anywhere.
 
 | command | flow |
 |---------|------|
-| `gitkit st`    | svn-like status: one `<CODE>\t<path>` line per change (same shape as `gitkit log`). `gitkit st -uq` hides untracked. Other flags pass through to `git status`. |
+| `gitkit st`    | svn-like status: one `<S?><CODE>\t<path>` line per change — column 1 is `S` when the file is staged (else a space), then the change letter (`M A D R ? C`). `gitkit st -uq` hides untracked. Other flags pass through to `git status`. The same printer is reused by `up`/`ci` to show what a merge changed. |
 | `gitkit ci`    | the one combined flow — see below. `push` and `mg` are folded into it. `gitkit ci <path>...` stages exactly those paths (svn-like) and skips the file menu. |
 | `gitkit up`    | update the current branch from its upstream (no commit/push): `git stash` leftover edits → `fetch` + `merge` upstream → `git stash pop`, with the same conflict handling as `ci`. Errors if the branch has no upstream. |
-| `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked skipped). `gitkit diff -uq` lists modified only. `gitkit diff <commit> [path]` diffs the working tree against a commit; `gitkit diff <commitA> <commitB> [path]` diffs two commits. |
+| `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked skipped). `gitkit diff <file>` diffs that file directly (no commit, no menu). `gitkit diff -uq` lists modified only. `gitkit diff <commit> [path]` diffs the working tree against a commit; `gitkit diff <commitA> <commitB> [path]` diffs two commits. |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
 | `gitkit exp`   | export a tracked folder/file **without** `.git`: `gitkit exp <path> [dest]`. The folder's contents land **flat** in `<dest>` (not nested under `<path>`), via `git archive HEAD:<path>` → `unzip` (a single file is written with `git show`). When `<dest>` is omitted it is built from `<path>` by appending `_exp` (e.g. `src/app` → `src/app_exp`). Folders require `unzip`. |
 | `gitkit log`   | history with changed paths (the `svn log -v` equivalent): `gitkit log [limit] [path]` → `git log --name-status`, with a `----` separator after each commit and no colour. A numeric arg is the limit (default 20), a non-numeric arg is the path; either order works. |

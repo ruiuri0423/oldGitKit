@@ -118,9 +118,11 @@ echo "== gitkit up (pull upstream, fast-forward) =="
     && git checkout -q -B main origin/main \
     && echo b > b.txt && git add b.txt && git commit -qm second \
     && git push -q origin HEAD:main ) >/dev/null 2>&1
-  "$GITKIT" up </dev/null >/dev/null 2>&1
+  out="$("$GITKIT" up </dev/null 2>&1)"
   check "pulled upstream commit (b.txt)" "$(git ls-files b.txt)" "b.txt"
   check "fast-forwarded to second" "$(git log -1 --format=%s)" "second"
+  case "$out" in *"changed files"*) ok "up shows changed-files header";; *) bad "no changed-files header";; esac
+  printf '%s\n' "$out" | grep -qE 'A	b\.txt' && ok "up lists merged file svn-like" || bad "merged file not svn-like (got: $out)"
 )
 
 echo "== gitkit up (stash leftover edit, restore after ff) =="
@@ -209,16 +211,19 @@ else
   ok "exp skipped (no unzip)"
 fi
 
-echo "== gitkit st (svn-like format) =="
+echo "== gitkit st (svn-like, S staged column) =="
 (
   d="$(newrepo)"; cd "$d"
   echo a > a.txt; git add a.txt; git commit -qm init
   echo b >> a.txt; echo n > untr.txt; echo s > st.txt; git add st.txt
   out="$("$GITKIT" st </dev/null 2>&1)"
-  # svn-like single-letter code + tab + path
-  printf '%s\n' "$out" | grep -qE '^M	a\.txt$'   && ok "M<tab>a.txt"     || bad "M line (got: $out)"
-  printf '%s\n' "$out" | grep -qE '^A	st\.txt$'  && ok "A<tab>st.txt"    || bad "A line"
-  printf '%s\n' "$out" | grep -qE '^\?	untr\.txt$' && ok "?<tab>untr.txt" || bad "? line"
+  # format: "<S|space><CODE>\t<path>"
+  printf '%s\n' "$out" | grep -qE '^ M	a\.txt$'    && ok "' M' modified unstaged" || bad "M line (got: $out)"
+  printf '%s\n' "$out" | grep -qE '^SA	st\.txt$'   && ok "'SA' staged add"        || bad "SA line"
+  printf '%s\n' "$out" | grep -qE '^ \?	untr\.txt$' && ok "' ?' untracked"        || bad "? line"
+  uq="$("$GITKIT" st -uq </dev/null 2>&1)"
+  case "$uq" in *untr.txt*) bad "st -uq should hide untracked";; *) ok "st -uq hides untracked";; esac
+  printf '%s\n' "$uq" | grep -qE '^SA	st\.txt$'    && ok "st -uq keeps staged"     || bad "st -uq staged"
 )
 
 echo "== gitkit ci <path> (stage given path, skip menu) =="
@@ -245,6 +250,18 @@ echo "== gitkit diff -uq (menu lists modified only) =="
   case "$out" in *a.txt*) ok "lists modified a.txt";; *) bad "a.txt missing (got: $out)";; esac
   case "$out" in *u.txt*) bad "-uq should hide untracked";; *) ok "hides untracked";; esac
   case "$out" in *s.txt*) bad "-uq should hide staged";; *) ok "hides staged";; esac
+)
+
+echo "== gitkit diff <file> (direct, no commit) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo v1 > a.txt; git add a.txt; git commit -qm c1
+  echo v2 >> a.txt          # unstaged change
+  git config diff.tool dummy
+  git config difftool.dummy.cmd 'printf ran >> ranlog.txt'
+  git config difftool.prompt false
+  "$GITKIT" diff a.txt </dev/null >/dev/null 2>&1
+  check "difftool invoked for bare file" "$([ -s ranlog.txt ] && echo yes || echo no)" "yes"
 )
 
 echo "== gitkit diff <commit> <file> (commit mode via difftool) =="

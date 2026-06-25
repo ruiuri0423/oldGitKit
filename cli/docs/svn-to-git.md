@@ -43,7 +43,7 @@ gitkit log [limit] <file>      # default limit 20; either arg order works
 |-----|-----|--------|
 | `svn checkout URL`          | `git clone URL`                                   | — |
 | `svn update`               | `git pull` (= `fetch` + `merge`)                  | `gitkit up` |
-| `svn status`               | `git status`                                      | `gitkit st` (svn-like) |
+| `svn status`               | `git status`                                      | `gitkit st` (svn-like, `S`=staged) |
 | `svn status -q`            | `git status -uno` (hide untracked)                | `gitkit st -uq` |
 | `svn add <f>`              | `git add <f>`                                     | `gitkit ci <f>` |
 | `svn delete <f>`          | `git rm <f>`                                       | — |

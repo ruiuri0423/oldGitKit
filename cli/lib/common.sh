@@ -111,18 +111,36 @@ gk_svn_code() {
   esac
 }
 
-# Print a clean, svn-like status: one "<CODE>\t<path>" line per change, the same
-# shape as `gitkit log`. $1 = "no" hides untracked (for `st -uq`).
+# The single svn-like status printer used everywhere (st, up, ci, ...).
+# Each line is "<COL1><CODE>\t<path>":
+#   COL1 = 'S' when the file is staged, else a space
+#   CODE = svn-like change letter (M A D R ? C)
+# Modes:
+#   gk_print_status            working tree, all changes
+#   gk_print_status no         working tree, hide untracked (st -uq)
+#   gk_print_status <A> <B>    files changed between commits A and B (COL1 blank)
 gk_print_status() {
-  local hide_untracked="${1:-}" line x y path code
+  if [ $# -ge 1 ] && [ "$1" != "no" ]; then          # commit-range mode
+    gk_git diff --name-status "$1" "${2:-HEAD}" \
+      | awk -F'\t' 'NF>=2 { print " " substr($1,1,1) "\t" $NF }'
+    return
+  fi
+  local hide_untracked="${1:-}" line x y path code staged
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     x="${line:0:1}"; y="${line:1:1}"; path="${line:3}"
     case "$path" in *" -> "*) path="${path##* -> }";; esac
     code="$(gk_svn_code "$x" "$y")"
     [ "$code" = "?" ] && [ "$hide_untracked" = "no" ] && continue
-    printf '%s\t%s\n' "$code" "$path"
+    staged=" "; case "$x" in M|A|D|R|C) staged="S";; esac
+    printf '%s%s\t%s\n' "$staged" "$code" "$path"
   done < <(gk_git status --porcelain)
+}
+
+# Show, svn-like, the files a merge/pull changed since commit $1 (no-op if none).
+gk_show_merged() {
+  local out; out="$(gk_print_status "$1" "$(gk_git rev-parse HEAD)")"
+  [ -n "$out" ] && { gk_info "changed files:"; printf '%s\n' "$out"; }
 }
 
 # Fills GK_U (untracked) and parallel GK_M/GK_Mc (modified-unstaged + code),
@@ -236,7 +254,7 @@ gk_finish_merge() {
 # Merge REF into the current branch, running the conflict loop on failure.
 # REF/KIND/REMOTE come from gk_pick_branch. Returns 2 if aborted.
 gk_integrate() {
-  local kind="$1" ref="$2" remote="$3"
+  local kind="$1" ref="$2" remote="$3" old
   if [ "$kind" = "R" ]; then
     # Fetch the whole remote (not `fetch $remote $branch`): on git 1.8.3.1 a
     # single-branch fetch only updates FETCH_HEAD, not refs/remotes/$remote/*,
@@ -244,14 +262,18 @@ gk_integrate() {
     gk_info "fetch $remote ..."
     gk_git fetch "$remote" || { gk_err "fetch failed"; return 1; }
   fi
-  if gk_git merge --no-edit "$ref"; then
+  old="$(gk_git rev-parse HEAD)"
+  # --no-stat: suppress git's own diffstat; we print the changes svn-like below.
+  if gk_git merge --no-edit --no-stat "$ref"; then
     gk_ok "integrated $ref, no conflicts"
+    gk_show_merged "$old"
     return 0
   fi
   if gk_git diff --name-only --diff-filter=U | grep -q .; then
     gk_resolve_conflicts || { return 2; }
     gk_finish_merge
     gk_ok "conflicts resolved and merge completed"
+    gk_show_merged "$old"
   else
     gk_err "merge failed (non-conflict error)"
     return 1

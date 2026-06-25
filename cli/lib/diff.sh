@@ -39,6 +39,13 @@ gk_cmd_diff() {
     return
   fi
 
+  # Direct file mode: `gitkit diff <file>` — no commit, no menu.
+  if [ -n "$path" ]; then
+    gk_info "difftool -- $path"
+    gk_git difftool -- "$path"
+    return
+  fi
+
   # Menu mode over the working tree.
   gk_collect_status
   local labels=() kinds=() paths=() i
