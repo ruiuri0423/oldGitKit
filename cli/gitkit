@@ -3,6 +3,11 @@
 #
 # Pure bash, zero deps, targets git 1.8.3.1 on CentOS 7. Put this dir on PATH
 # (or symlink `gitkit` into ~/bin) and run `gitkit <command>`.
+
+# Re-exec under bash if started via `sh gitkit` (the scripts use process
+# substitution + mapfile, which POSIX /bin/sh does not support).
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
+
 set -uo pipefail
 
 # Resolve our own location (follow symlinks) so lib/ is found from anywhere.
