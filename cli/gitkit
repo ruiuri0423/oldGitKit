@@ -28,6 +28,7 @@ GK_LIB="$GK_HOME/lib"
 . "$GK_LIB/up.sh"
 . "$GK_LIB/diff.sh"
 . "$GK_LIB/reset.sh"
+. "$GK_LIB/exp.sh"
 
 gk_usage() {
   cat >&2 <<'EOF'
@@ -43,6 +44,8 @@ Usage: gitkit <command>
           stash leftover edits -> fetch + merge upstream -> stash pop
   diff    pick U/M/S files and open each in git's configured difftool
   reset   unstage files, or reset the branch to a commit (soft/mixed/hard)
+  exp     export a tracked folder without .git: `gitkit exp <path> [dest]`
+          (git archive HEAD <path> -> unzip into dest/<path>)
 
 Conflict options: tf=their full  mf=mine full  tc=their conflict  mc=mine conflict
                   e=edit(git mergetool)  r=resolved  a=abort
@@ -58,6 +61,7 @@ main() {
     up)    gk_cmd_up "$@";;
     diff)  gk_cmd_diff "$@";;
     reset) gk_cmd_reset "$@";;
+    exp)   gk_cmd_exp "$@";;
     ""|-h|--help|help) gk_usage;;
     *) gk_err "未知指令: $cmd"; gk_usage; exit 2;;
   esac
