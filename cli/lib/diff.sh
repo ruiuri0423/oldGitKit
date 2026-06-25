@@ -46,32 +46,21 @@ gk_cmd_diff() {
     return
   fi
 
-  # Menu mode over the working tree.
+  # Menu mode over the working tree. -uq lists modified files only.
   gk_collect_status
-  local labels=() kinds=() paths=() i
-  for i in "${!GK_S[@]}"; do
-    [ "$uq" -eq 1 ] && continue
-    labels+=("$(gk_lbl "${GK_Sc[$i]}" "${GK_S[$i]}")"); kinds+=("S"); paths+=("${GK_S[$i]}")
-  done
-  for i in "${!GK_M[@]}"; do
-    labels+=("$(gk_lbl "${GK_Mc[$i]}" "${GK_M[$i]}")"); kinds+=("M"); paths+=("${GK_M[$i]}")
-  done
-  for i in "${!GK_U[@]}"; do
-    [ "$uq" -eq 1 ] && continue
-    labels+=("$(gk_lbl "?" "${GK_U[$i]}")"); kinds+=("U"); paths+=("${GK_U[$i]}")
-  done
+  if [ "$uq" -eq 1 ]; then gk_build_menu "M"; else gk_build_menu "S M U"; fi
 
-  if [ ${#labels[@]} -eq 0 ]; then
+  if [ ${#GK_MENU_LABELS[@]} -eq 0 ]; then
     gk_info "no changes to compare"
     return 0
   fi
 
-  gk_menu_multi "Select files to diff (opened in sequence)" "${labels[@]}" \
+  gk_menu_multi "Select files to diff (opened in sequence)" "${GK_MENU_LABELS[@]}" \
     || { gk_warn "cancelled"; return 1; }
 
   local k p
   for i in "${GK_PICK_IDXS[@]}"; do
-    k="${kinds[$i]}"; p="${paths[$i]}"
+    k="${GK_MENU_KINDS[$i]}"; p="${GK_MENU_PATHS[$i]}"
     case "$k" in
       S) gk_info "diff (staged):  $p"; gk_git difftool --cached -- "$p";;
       M) gk_info "diff (working): $p"; gk_git difftool -- "$p";;

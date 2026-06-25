@@ -11,26 +11,21 @@ gk_cmd_ci() {
   local addpaths=("$@")            # explicit paths -> stage directly, no menu
   gk_collect_status
 
-  # 1-3. Files the user can still add = modified-unstaged + untracked.
-  local addable=() labels=() f i
-  for i in "${!GK_M[@]}"; do addable+=("${GK_M[$i]}"); labels+=("$(gk_lbl "${GK_Mc[$i]}" "${GK_M[$i]}")"); done
-  for f in "${GK_U[@]}"; do addable+=("$f"); labels+=("$(gk_lbl "?" "$f")"); done
-
+  # 1-3. Stage files: take explicit paths, or pick the addable ones (M + U).
+  gk_build_menu "M U"
   if [ ${#addpaths[@]} -gt 0 ]; then
     # svn-like: `gitkit ci <path/file>...` -> stage exactly those, skip selection.
     gk_git add -- "${addpaths[@]}" && gk_ok "added ${#addpaths[@]} path(s)"
-  elif [ ${#addable[@]} -eq 0 ] && [ ${#GK_S[@]} -eq 0 ]; then
+  elif [ ${#GK_MENU_PATHS[@]} -eq 0 ] && [ ${#GK_S[@]} -eq 0 ]; then
     gk_info "No changes to commit"
     gk_confirm "Sync & push anyway?" n || return 0
-  else
-    if [ ${#addable[@]} -gt 0 ]; then
-      if gk_menu_multi "Select files to commit" "${labels[@]}"; then
-        local sel=()
-        for i in "${GK_PICK_IDXS[@]}"; do sel+=("${addable[$i]}"); done
-        gk_git add -- "${sel[@]}" && gk_ok "added ${#sel[@]} file(s)"
-      else
-        gk_warn "no new files selected"
-      fi
+  elif [ ${#GK_MENU_PATHS[@]} -gt 0 ]; then
+    if gk_menu_multi "Select files to commit" "${GK_MENU_LABELS[@]}"; then
+      local sel=() i
+      for i in "${GK_PICK_IDXS[@]}"; do sel+=("${GK_MENU_PATHS[$i]}"); done
+      gk_git add -- "${sel[@]}" && gk_ok "added ${#sel[@]} file(s)"
+    else
+      gk_warn "no new files selected"
     fi
   fi
 

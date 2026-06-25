@@ -28,6 +28,10 @@ the symlink works from anywhere.
 
 ## Commands
 
+Run `gitkit help` for a one-screen overview, `gitkit help <command>` (or
+`gitkit <command> -h`) for detailed help with examples, and `gitkit help
+conflicts` for the conflict options. `gitkit --version` prints the version.
+
 | command | flow |
 |---------|------|
 | `gitkit st`    | svn-like status: one `<S?><CODE>\t<path>` line per change — column 1 is `S` when the file is staged (else a space), then the change letter (`M A D R ? C`). `gitkit st -uq` hides untracked. Other flags pass through to `git status`. The same printer is reused by `up`/`ci` to show what a merge changed. |

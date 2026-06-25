@@ -19,11 +19,10 @@ gk_reset_unstage() {
     gk_info "no staged files"
     return 0
   fi
-  local labels=() i
-  for i in "${!GK_S[@]}"; do labels+=("$(gk_lbl "${GK_Sc[$i]}" "${GK_S[$i]}")"); done
-  gk_menu_multi "Select files to unstage" "${labels[@]}" || { gk_warn "cancelled"; return 1; }
-  local sel=()
-  for i in "${GK_PICK_IDXS[@]}"; do sel+=("${GK_S[$i]}"); done
+  gk_build_menu "S"
+  gk_menu_multi "Select files to unstage" "${GK_MENU_LABELS[@]}" || { gk_warn "cancelled"; return 1; }
+  local sel=() i
+  for i in "${GK_PICK_IDXS[@]}"; do sel+=("${GK_MENU_PATHS[$i]}"); done
   gk_git reset -q HEAD -- "${sel[@]}" \
     && gk_ok "unstaged ${#sel[@]} file(s)"
 }

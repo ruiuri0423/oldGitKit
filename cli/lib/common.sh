@@ -5,6 +5,11 @@
 # git status/branch collection, and the shared conflict-resolution loop.
 # Targets git 1.8.3.1 / bash 4.2 (CentOS 7). Plain everyday git commands only:
 # no `git -C`, no porcelain v2, no exotic plumbing.
+#
+# Sections below: colours/logging · git wrapper · selection menus · repo state ·
+# status (svn-like) · branch picker · conflict resolution · integrate/sync.
+
+GK_VERSION="1.0"
 
 # ── colours (only when stderr is a tty) ───────────────────────────────
 if [ -t 2 ]; then
@@ -160,6 +165,30 @@ gk_collect_status() {
 
 # Build an svn-like menu label: "<CODE><tab><path>".
 gk_lbl() { printf '%s\t%s' "$1" "$2"; }
+
+# Build a file-selection menu from collected status (call gk_collect_status
+# first). $1 = categories in display order, a subset of "S M U".
+# Fills parallel arrays: GK_MENU_LABELS (svn-like), GK_MENU_PATHS, GK_MENU_KINDS.
+gk_build_menu() {
+  GK_MENU_LABELS=(); GK_MENU_PATHS=(); GK_MENU_KINDS=()
+  local cat i
+  for cat in $1; do
+    case "$cat" in
+      S) for i in "${!GK_S[@]}"; do
+           GK_MENU_LABELS+=("$(gk_lbl "${GK_Sc[$i]}" "${GK_S[$i]}")")
+           GK_MENU_PATHS+=("${GK_S[$i]}"); GK_MENU_KINDS+=("S")
+         done;;
+      M) for i in "${!GK_M[@]}"; do
+           GK_MENU_LABELS+=("$(gk_lbl "${GK_Mc[$i]}" "${GK_M[$i]}")")
+           GK_MENU_PATHS+=("${GK_M[$i]}"); GK_MENU_KINDS+=("M")
+         done;;
+      U) for i in "${!GK_U[@]}"; do
+           GK_MENU_LABELS+=("$(gk_lbl "?" "${GK_U[$i]}")")
+           GK_MENU_PATHS+=("${GK_U[$i]}"); GK_MENU_KINDS+=("U")
+         done;;
+    esac
+  done
+}
 
 # gk_pick_branch PROMPT  → sets GK_BR_KIND (L|R), GK_BR_REF, GK_BR_REMOTE
 gk_pick_branch() {

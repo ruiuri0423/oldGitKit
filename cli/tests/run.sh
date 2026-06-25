@@ -307,6 +307,16 @@ echo "== gitkit st (full vs -uq modified-only) =="
   case "$modonly" in *a.txt*)    ok "st -uq still shows modified";; *) bad "st -uq should show modified";; esac
 )
 
+echo "== gitkit help =="
+(
+  over="$("$GITKIT" help 2>&1)"
+  case "$over" in *"Daily flow"*ci*up*diff*) ok "overview lists commands";; *) bad "overview (got: $over)";; esac
+  case "$("$GITKIT" ci -h 2>&1)"        in *"commit & publish"*) ok "ci -h -> ci help";; *) bad "ci -h";; esac
+  case "$("$GITKIT" help conflicts 2>&1)" in *"their full"*) ok "help conflicts";; *) bad "help conflicts";; esac
+  case "$("$GITKIT" --version 2>&1)" in "gitkit "*) ok "--version";; *) bad "--version";; esac
+  "$GITKIT" bogus >/dev/null 2>&1; check "unknown cmd exits 2" "$?" "2"
+)
+
 echo
 PASS="$(grep -c P "$RESULTS" || true)"; FAIL="$(grep -c F "$RESULTS" || true)"
 rm -f "$RESULTS"
