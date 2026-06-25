@@ -24,6 +24,7 @@ the symlink works from anywhere.
 |---------|------|
 | `gitkit st`    | `git status`; `gitkit st -uq` runs `git status -uno` (hides untracked, so only modified/staged show). |
 | `gitkit ci`    | the one combined flow — see below. `push` and `mg` are folded into it. |
+| `gitkit up`    | update the current branch from its upstream (no commit/push): `git stash` leftover edits → `fetch` + `merge` upstream → `git stash pop`, with the same conflict handling as `ci`. Errors if the branch has no upstream. |
 | `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked files are skipped). |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
 
@@ -83,9 +84,9 @@ bash cli/tests/run.sh
 ```
 
 Builds throwaway repos and pipes menu answers to exercise `ci` (commit/push,
-stash restore, merge conflict), `reset`, `st`, and the conflict parser
-(22 checks). The interactive `e`/difftool paths are out of scope for the
-automated tests.
+stash restore, merge conflict), `up` (fast-forward pull, stash restore, no
+upstream), `reset`, `st`, and the conflict parser (28 checks). The interactive
+`e`/difftool paths are out of scope for the automated tests.
 
 ## git commands used
 

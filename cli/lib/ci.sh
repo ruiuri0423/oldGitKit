@@ -44,34 +44,8 @@ gk_cmd_ci() {
   gk_pick_branch "Select the branch to push to" || { gk_warn "cancelled"; return 1; }
   local kind="$GK_BR_KIND" ref="$GK_BR_REF" remote="$GK_BR_REMOTE"
 
-  # 6. Stash leftover (unselected) tracked modifications so the merge is clean.
-  local stashed=0
-  if ! gk_git diff --quiet; then
-    gk_info "stashing local modifications ..."
-    gk_git stash && stashed=1
-  fi
-
-  # 7. fetch + merge the chosen branch into the current branch.
-  gk_integrate "$kind" "$ref" "$remote"
-  local rc=$?
-  if [ $rc -ne 0 ]; then
-    [ $stashed -eq 1 ] && { gk_warn "restoring stashed changes ..."; gk_git stash pop || true; }
-    return $rc
-  fi
-
-  # 8. Restore the stash; resolve conflicts in stash-pop context.
-  if [ $stashed -eq 1 ]; then
-    if gk_git stash pop; then
-      gk_ok "restored local modifications"
-    elif gk_git diff --name-only --diff-filter=U | grep -q .; then
-      gk_resolve_conflicts stash || { gk_warn "ci aborted during stash pop"; return 2; }
-      gk_git stash drop
-      gk_ok "stash conflicts resolved"
-    else
-      gk_err "stash pop failed"
-      return 1
-    fi
-  fi
+  # 6-8. Stash leftover edits -> fetch + merge the chosen branch -> stash pop.
+  gk_pull_with_stash "$kind" "$ref" "$remote" || return $?
 
   # 9. Push current HEAD to the chosen branch.
   local premote ptarget cur

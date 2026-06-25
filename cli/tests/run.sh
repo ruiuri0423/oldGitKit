@@ -106,6 +106,49 @@ echo "== gitkit ci (no changes, decline sync) =="
   case "$out" in *"No changes to commit"*) ok "reports No changes to commit";; *) bad "no-change notice (got: $out)";; esac
 )
 
+echo "== gitkit up (pull upstream, fast-forward) =="
+(
+  d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  echo a > a.txt; git add a.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  # another clone advances origin/main
+  c2="$(mktemp -d)"; git clone -q "$rem" "$c2" 2>/dev/null
+  ( cd "$c2" && git config user.email t@t && git config user.name t \
+    && git checkout -q -B main origin/main \
+    && echo b > b.txt && git add b.txt && git commit -qm second \
+    && git push -q origin HEAD:main ) >/dev/null 2>&1
+  "$GITKIT" up </dev/null >/dev/null 2>&1
+  check "pulled upstream commit (b.txt)" "$(git ls-files b.txt)" "b.txt"
+  check "fast-forwarded to second" "$(git log -1 --format=%s)" "second"
+)
+
+echo "== gitkit up (stash leftover edit, restore after ff) =="
+(
+  d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  printf 'a\n' > a.txt; git add a.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  c2="$(mktemp -d)"; git clone -q "$rem" "$c2" 2>/dev/null
+  ( cd "$c2" && git config user.email t@t && git config user.name t \
+    && git checkout -q -B main origin/main \
+    && echo b > b.txt && git add b.txt && git commit -qm second \
+    && git push -q origin HEAD:main ) >/dev/null 2>&1
+  echo local >> a.txt          # uncommitted local edit -> stashed, then restored
+  "$GITKIT" up </dev/null >/dev/null 2>&1
+  check "upstream commit pulled" "$(git ls-files b.txt)" "b.txt"
+  check "local edit restored" "$(tail -n1 a.txt)" "local"
+  check "no stash left" "$(git stash list | wc -l | tr -d ' ')" "0"
+)
+
+echo "== gitkit up (no upstream -> error) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo a > a.txt; git add a.txt; git commit -qm init
+  out="$("$GITKIT" up </dev/null 2>&1)"
+  case "$out" in *"no upstream configured"*) ok "errors without upstream";; *) bad "no-upstream error (got: $out)";; esac
+)
+
 echo "== gitkit reset unstage =="
 (
   d="$(newrepo)"; cd "$d"

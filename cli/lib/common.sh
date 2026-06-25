@@ -208,8 +208,11 @@ gk_finish_merge() {
 gk_integrate() {
   local kind="$1" ref="$2" remote="$3"
   if [ "$kind" = "R" ]; then
-    gk_info "fetch $remote ${ref#*/} ..."
-    gk_git fetch "$remote" "${ref#*/}" || { gk_err "fetch failed"; return 1; }
+    # Fetch the whole remote (not `fetch $remote $branch`): on git 1.8.3.1 a
+    # single-branch fetch only updates FETCH_HEAD, not refs/remotes/$remote/*,
+    # so the `merge $remote/$branch` below would merge a stale ref.
+    gk_info "fetch $remote ..."
+    gk_git fetch "$remote" || { gk_err "fetch failed"; return 1; }
   fi
   if gk_git merge --no-edit "$ref"; then
     gk_ok "integrated $ref, no conflicts"
@@ -223,4 +226,36 @@ gk_integrate() {
     gk_err "merge failed (non-conflict error)"
     return 1
   fi
+}
+
+# Stash leftover (unselected) tracked edits, integrate REF, then restore the
+# stash — resolving conflicts in either step. Shared by `ci` and `up`.
+# Returns 0 = ok, 1 = error, 2 = aborted.
+gk_pull_with_stash() {
+  local kind="$1" ref="$2" remote="$3" stashed=0 rc
+  if ! gk_git diff --quiet; then
+    gk_info "stashing local modifications ..."
+    gk_git stash && stashed=1
+  fi
+
+  gk_integrate "$kind" "$ref" "$remote"
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    [ $stashed -eq 1 ] && { gk_warn "restoring stashed changes ..."; gk_git stash pop || true; }
+    return $rc
+  fi
+
+  if [ $stashed -eq 1 ]; then
+    if gk_git stash pop; then
+      gk_ok "restored local modifications"
+    elif gk_git diff --name-only --diff-filter=U | grep -q .; then
+      gk_resolve_conflicts stash || { gk_warn "aborted during stash pop"; return 2; }
+      gk_git stash drop
+      gk_ok "stash conflicts resolved"
+    else
+      gk_err "stash pop failed"
+      return 1
+    fi
+  fi
+  return 0
 }
