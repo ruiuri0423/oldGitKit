@@ -35,7 +35,8 @@ conflicts` for the conflict options. `gitkit --version` prints the version.
 | command | flow |
 |---------|------|
 | `gitkit st`    | svn-like status: one `<S?><CODE>\t<path>` line per change — column 1 is `S` when the file is staged (else a space), then the change letter (`M A D R ? C`). `gitkit st -uq` hides untracked. Other flags pass through to `git status`. The same printer is reused by `up`/`ci` to show what a merge changed. |
-| `gitkit ci`    | the one combined flow — see below. `push` and `mg` are folded into it. `gitkit ci <path>...` stages exactly those paths (svn-like) and skips the file menu. |
+| `gitkit add`   | start tracking new (untracked) files — the `svn add` counterpart. With no args you pick untracked files from a menu; `gitkit add <path>...` adds exactly those. `ci` only commits already-tracked changes, so a brand-new file must be `add`ed first (then a later `ci` picks it up). Underlying: `git add -- <paths>`. |
+| `gitkit ci`    | the one combined flow — see below. Commits **already-tracked** changes only (svn-like); untracked files are never staged here (use `gitkit add`). `push` and `mg` are folded into it. `gitkit ci <path>...` stages the tracked changes under those paths (`git add -u`) and skips the file menu. |
 | `gitkit up`    | update the current branch from its upstream (no commit/push): `git stash` leftover edits → `fetch` + `merge` upstream → `git stash pop`, with the same conflict handling as `ci`. Errors if the branch has no upstream. |
 | `gitkit diff`  | pick U/M/S files and open each in git's configured `difftool` (untracked skipped). `gitkit diff <file>` diffs that file directly (no commit, no menu). `gitkit diff -uq` lists modified only; `gitkit diff -y` skips the tool's launch prompt. `gitkit diff <commit> [path]` diffs the working tree against a commit; `gitkit diff <commitA> <commitB> [path]` diffs two commits. |
 | `gitkit reset` | unstage files (`reset HEAD -- files`), or reset the branch to a commit (`--soft`/`--mixed`/`--hard`; hard asks for confirmation). |
@@ -44,9 +45,11 @@ conflicts` for the conflict options. `gitkit --version` prints the version.
 
 ### `gitkit ci`
 
-A single commit → sync → push flow:
+A single commit → sync → push flow. It stages **already-tracked** changes only
+(svn-like) — untracked files never appear here; run `gitkit add <path>` first to
+start tracking them (then they are committed too, since they're already staged):
 
-1. show U/M files, pick which to `add`;
+1. show tracked (M) files, pick which to `add` (`git add -u`);
 2. `commit` with a message you type;
 3. pick a branch (local or remote) — the one to sync with **and push to**;
 4. if any modified files are left over, `git stash` them so the merge is clean;
@@ -109,7 +112,7 @@ Everyday porcelain plus a few standard read-only idioms, all available in git
 1.8.3.1:
 
 ```
-add  commit  push  fetch  merge  checkout  reset  diff  difftool  mergetool
+add / add -u  commit  push  fetch  merge  checkout  reset  diff  difftool  mergetool
 stash / stash pop / stash drop / stash list   archive --format=zip
 status / status -uno / status --porcelain   branch / branch -r / branch --list
 log --oneline   cat-file -t   show   (exp: detect tree/blob, write a file)

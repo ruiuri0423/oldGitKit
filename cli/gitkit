@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gitkit — simplified, svn-style git workflow tool.
 #
-# Commands: st · ci · up · diff · reset · exp · log   (see `gitkit help`).
+# Commands: st · add · ci · up · diff · reset · exp · log   (see `gitkit help`).
 # Pure bash, zero deps, targets git 1.8.3.1 on CentOS 7. Put this dir on PATH
 # (or symlink `gitkit` into ~/bin) and run `gitkit <command>`.
 #
@@ -29,6 +29,7 @@ GK_LIB="$GK_HOME/lib"
 . "$GK_LIB/common.sh"
 . "$GK_LIB/help.sh"
 . "$GK_LIB/st.sh"
+. "$GK_LIB/add.sh"
 . "$GK_LIB/ci.sh"
 . "$GK_LIB/up.sh"
 . "$GK_LIB/diff.sh"
@@ -45,6 +46,7 @@ main() {
 
   case "$cmd" in
     st)            gk_cmd_st    "$@";;
+    add)           gk_cmd_add   "$@";;
     ci)            gk_cmd_ci    "$@";;
     up)            gk_cmd_up    "$@";;
     diff)          gk_cmd_diff  "$@";;

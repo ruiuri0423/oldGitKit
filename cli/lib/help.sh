@@ -17,7 +17,8 @@ ${d}Usage:${o} gitkit <command> [args]
 
 ${y}Daily flow${o}
   ${c}st${o}  [-uq]               status, svn-like   ${d}(col1 S = staged; -uq hides untracked)${o}
-  ${c}ci${o}  [path...]           stage -> commit -> sync -> push
+  ${c}add${o} [path...]           start tracking new (untracked) files   ${d}(= svn add)${o}
+  ${c}ci${o}  [path...]           commit tracked changes -> sync -> push
   ${c}up${o}                      pull the current branch from its upstream
   ${c}log${o} [limit] [path]      history with changed paths   ${d}(= svn log -v)${o}
 
@@ -36,6 +37,7 @@ EOF
 gk_help() {
   case "${1:-}" in
     st)                 _gk_help_st;;
+    add)                _gk_help_add;;
     ci)                 _gk_help_ci;;
     up)                 _gk_help_up;;
     diff)               _gk_help_diff;;
@@ -68,14 +70,38 @@ _gk_help_st() {
 EOF
 }
 
+_gk_help_add() {
+  _gk_title "gitkit add [path...] — start tracking new files (svn add)"
+  cat >&2 <<'EOF'
+
+  `ci` only commits changes to ALREADY-TRACKED files (like svn). A brand-new,
+  untracked file has to be `add`ed first so git starts tracking it — then a
+  later `ci` will pick it up (it is already staged).
+
+  With no args you pick from a menu of the untracked (?) files. With paths you
+  add exactly those.
+
+    1. git add <chosen paths>            (tracks the file + stages its content)
+
+  Examples
+    gitkit add                 pick untracked files from a menu
+    gitkit add src/new.v       track just this new file
+    gitkit add src/ docs/      track everything untracked under these paths
+
+  Underlying: git add -- <paths>   (then `gitkit st` shows them as 'SA')
+EOF
+}
+
 _gk_help_ci() {
   _gk_title "gitkit ci [path...] — commit & publish in one flow"
   cat >&2 <<'EOF'
 
-  With no args you pick files from a menu. With paths you stage exactly those
-  (svn-like) and skip the menu. Then:
+  Commits ALREADY-TRACKED changes only (svn-like) — untracked files are never
+  staged here; run `gitkit add <path>` first to start tracking them. With no
+  args you pick tracked (M) files from a menu. With paths you stage the tracked
+  changes under those (git add -u) and skip the menu. Then:
 
-    1. git add <chosen paths>
+    1. git add -u <chosen paths>   (tracked modifications/deletions only)
     2. git commit -m "<message you type>"
     3. pick a branch (local or remote) to integrate with AND push to
     4. git stash      (any leftover, unselected edits — keeps the merge clean)
@@ -83,12 +109,13 @@ _gk_help_ci() {
     6. git stash pop                               (conflicts -> see "conflicts")
     7. git push <remote> HEAD:<branch>
 
-  With no changes it asks whether to sync & push anyway.
+  Files already staged (e.g. new files you ran `gitkit add` on) are committed
+  too. With no changes it asks whether to sync & push anyway.
 
   Examples
-    gitkit ci                 pick files interactively, then commit + push
-    gitkit ci src/app.v       commit just this file (skip the menu)
-    gitkit ci src/ docs/      stage these paths, then commit + push
+    gitkit ci                 pick tracked files interactively, then commit + push
+    gitkit ci src/app.v       commit just this tracked file (skip the menu)
+    gitkit ci src/ docs/      stage tracked changes under these, then commit + push
 EOF
 }
 

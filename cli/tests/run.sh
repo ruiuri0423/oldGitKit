@@ -241,6 +241,53 @@ echo "== gitkit ci <path> (stage given path, skip menu) =="
   check "b.txt still modified"   "$(git status --porcelain b.txt | cut -c1-2)" " M"
 )
 
+echo "== gitkit add <path> (start tracking an untracked file) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo a > a.txt; git add a.txt; git commit -qm init
+  echo n > new.txt                     # untracked
+  "$GITKIT" add new.txt </dev/null >/dev/null 2>&1
+  check "new.txt staged as add" "$(git status --porcelain new.txt | cut -c1-2)" "A "
+)
+
+echo "== gitkit add (menu picks only chosen untracked files) =="
+(
+  d="$(newrepo)"; cd "$d"
+  echo a > a.txt; git add a.txt; git commit -qm init
+  echo n1 > n1.txt; echo n2 > n2.txt   # two untracked, sorted n1(1) n2(2)
+  printf '1\n' | "$GITKIT" add >/dev/null 2>&1
+  check "n1.txt added"           "$(git status --porcelain n1.txt | cut -c1-2)" "A "
+  check "n2.txt still untracked" "$(git status --porcelain n2.txt | cut -c1-2)" "??"
+)
+
+echo "== gitkit ci (ignores untracked files, svn-like) =="
+(
+  d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  echo a > a.txt; git add a.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  echo a2 >> a.txt                     # modified tracked -> the only menu item
+  echo u > untr.txt                    # untracked -> must NOT be committed
+  # menu shows only a.txt(1); select 1; msg; branch origin/main(2); push y
+  printf '1\nedit a\n2\ny\n' | "$GITKIT" ci >/dev/null 2>&1
+  check "commit excludes untracked"  "$(git show --name-only --format= HEAD | grep -c '^untr.txt$')" "0"
+  check "untracked stays untracked"  "$(git status --porcelain untr.txt | cut -c1-2)" "??"
+)
+
+echo "== gitkit add + ci (added file then gets committed) =="
+(
+  d="$(newrepo)"; cd "$d"
+  rem="$(mktemp -d)"; ( cd "$rem" && git init -q --bare . )
+  echo a > a.txt; git add a.txt; git commit -qm init
+  git remote add origin "$rem"; git push -q -u origin main 2>/dev/null
+  echo n > new.txt
+  "$GITKIT" add new.txt </dev/null >/dev/null 2>&1      # stage the new file
+  # no unstaged tracked M -> menu empty, but staged present -> straight to commit
+  printf 'add new\n2\ny\n' | "$GITKIT" ci >/dev/null 2>&1
+  check "new.txt committed" "$(git show --name-only --format= HEAD | grep -c '^new.txt$')" "1"
+  check "commit message"    "$(git log -1 --format=%s)" "add new"
+)
+
 echo "== gitkit diff -uq (menu lists modified only) =="
 (
   d="$(newrepo)"; cd "$d"
@@ -341,7 +388,8 @@ echo "== gitkit st (full vs -uq modified-only) =="
 echo "== gitkit help =="
 (
   over="$("$GITKIT" help 2>&1)"
-  case "$over" in *"Daily flow"*ci*up*diff*) ok "overview lists commands";; *) bad "overview (got: $over)";; esac
+  case "$over" in *"Daily flow"*add*ci*up*diff*) ok "overview lists commands";; *) bad "overview (got: $over)";; esac
+  case "$("$GITKIT" add -h 2>&1)"       in *"start tracking"*) ok "add -h -> add help";; *) bad "add -h";; esac
   case "$("$GITKIT" ci -h 2>&1)"        in *"commit & publish"*) ok "ci -h -> ci help";; *) bad "ci -h";; esac
   case "$("$GITKIT" help conflicts 2>&1)" in *"their full"*) ok "help conflicts";; *) bad "help conflicts";; esac
   case "$("$GITKIT" --version 2>&1)" in "gitkit "*) ok "--version";; *) bad "--version";; esac

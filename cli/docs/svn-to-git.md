@@ -45,7 +45,7 @@ gitkit log [limit] <file>      # default limit 20; either arg order works
 | `svn update`               | `git pull` (= `fetch` + `merge`)                  | `gitkit up` |
 | `svn status`               | `git status`                                      | `gitkit st` (svn-like, `S`=staged) |
 | `svn status -q`            | `git status -uno` (hide untracked)                | `gitkit st -uq` |
-| `svn add <f>`              | `git add <f>`                                     | `gitkit ci <f>` |
+| `svn add <f>`              | `git add <f>`                                     | `gitkit add <f>` |
 | `svn delete <f>`          | `git rm <f>`                                       | — |
 | `svn commit <f> -m "msg"`  | `git commit -m "msg"` **+** `git push`            | `gitkit ci <f>` |
 | `svn diff`                 | `git diff` / `git difftool`                       | `gitkit diff` |
@@ -70,6 +70,10 @@ gitkit log [limit] <file>      # default limit 20; either arg order works
 
 - **Commit ≠ publish.** `svn commit` sends to the server in one step; in git
   `git commit` is local and `git push` publishes. `gitkit ci` does both.
+- **New files need `add` first.** Like `svn ci`, `gitkit ci` only commits
+  changes to already-tracked files — it never scoops up untracked ones. Run
+  `gitkit add <f>` (the `svn add` counterpart) to start tracking a new file;
+  a later `gitkit ci` then commits it (it is already staged).
 - **Revisions.** SVN `rNNN` is a global number; git uses commit SHAs (and
   ranges `A..B`), not sequential integers.
 - **Whole-repo commits.** git commits the whole staged set as one snapshot;

@@ -1,21 +1,28 @@
 # shellcheck shell=bash
 # ci.sh — `gitkit ci [path...]`: the one combined flow.
-#   pick U/M files (or take explicit paths) -> add -> commit -> pick a branch ->
-#   stash leftover edits -> fetch + merge that branch -> stash pop -> push.
-# Passing paths (svn-like) skips the file-selection menu and stages them directly.
-# Standalone push/mg were folded into this; conflicts (merge or stash pop) go
-# through the shared tf/mf/tc/mc/e/r/a loop.
+#   pick tracked M files (or take explicit paths) -> add -> commit ->
+#   pick a branch -> stash leftover edits -> fetch + merge that branch ->
+#   stash pop -> push.
+# svn-like: `ci` only ever stages ALREADY-TRACKED changes (git add -u). New,
+# untracked files are never picked up here — run `gitkit add <path>` first to
+# start tracking them (just like `svn add` before `svn ci`).
+# Passing paths skips the file-selection menu and stages tracked changes under
+# them directly. Standalone push/mg were folded into this; conflicts (merge or
+# stash pop) go through the shared tf/mf/tc/mc/e/r/a loop.
 
 gk_cmd_ci() {
   gk_need_repo
   local addpaths=("$@")            # explicit paths -> stage directly, no menu
   gk_collect_status
 
-  # 1-3. Stage files: take explicit paths, or pick the addable ones (M + U).
-  gk_build_menu "M U"
+  # 1-3. Stage TRACKED changes only (svn-like): explicit paths or the M menu.
+  # Untracked files never appear here; `git add -u` refuses to add new files.
+  gk_build_menu "M"
   if [ ${#addpaths[@]} -gt 0 ]; then
-    # svn-like: `gitkit ci <path/file>...` -> stage exactly those, skip selection.
-    gk_git add -- "${addpaths[@]}" && gk_ok "added ${#addpaths[@]} path(s)"
+    # svn-like: `gitkit ci <path/file>...` -> stage tracked changes under those
+    # paths and skip selection. `-u` updates modified/deleted tracked files only,
+    # so an untracked path is silently ignored (use `gitkit add` for those).
+    gk_git add -u -- "${addpaths[@]}" && gk_ok "staged tracked changes in ${#addpaths[@]} path(s)"
   elif [ ${#GK_MENU_PATHS[@]} -eq 0 ] && [ ${#GK_S[@]} -eq 0 ]; then
     gk_info "No changes to commit"
     gk_confirm "Sync & push anyway?" n || return 0
@@ -23,7 +30,7 @@ gk_cmd_ci() {
     if gk_menu_multi "Select files to commit" "${GK_MENU_LABELS[@]}"; then
       local sel=() i
       for i in "${GK_PICK_IDXS[@]}"; do sel+=("${GK_MENU_PATHS[$i]}"); done
-      gk_git add -- "${sel[@]}" && gk_ok "added ${#sel[@]} file(s)"
+      gk_git add -u -- "${sel[@]}" && gk_ok "added ${#sel[@]} file(s)"
     else
       gk_warn "no new files selected"
     fi
